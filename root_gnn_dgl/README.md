@@ -40,6 +40,16 @@ Run the `setup/test_setup.py` script to confirm that all packages needed for tra
 ```bash
 python setup/test_setup.py
 ```
+## Running the Demo
+The demo training is an example of our ML workflow, consisting of training a pretrained model, then finetuning it for an analysis task. The config files for the demo are located in the directory `configs/demo/`. The demo can be run on a login node.
+
+The pretraining for the demo is a multiclass classification training on 12 datasets corresponding to 12 distinct physics processes, containing 10,000 simulated collision events each. The pretraining is then fintuned on a binary classification task between two datasets containing 10,000 simulated collision events each for two different processes, called ttH CP Even and ttH CP Odd.
+
+The entire demo can be ran with the command
+```bash
+source run_demo.sh
+``` 
+
 
 ## Data Preparation
 The first step in the process is to convert the events stored in ROOT files into DGL graph objects. This conversion is handled automatically by the Dataset objects during their creation, provided the graph data has not already been saved to disk. To accomplish this, a simple script is used to initialize the relevant Dataset object and then exit. This script needs to be executed for each data chunk in each dataset being used for training.
@@ -47,7 +57,15 @@ The first step in the process is to convert the events stored in ROOT files into
 Below is an example of how to use the `scripts/prep_data.py` script:
 
 ```bash
-<insert exmaple here>
+datasets=("ttH" "tHjb" "ggF" "VBF" "WH" "ZH" "ttyy" "tttt" "SingleT_schan" "ttbar" "ttW" "ttt")
+chunks=3
+
+for data in "${datasets[@]}"; do
+    python scripts/prep_data.py --config configs/demo/pretraining_multiclass.yaml --dataset "$data" --shuffle_mode --chunk 0
+    for ((i=0; i<chunks; i++)); do
+        python scripts/prep_data.py --config configs/demo/pretraining_multiclass.yaml --dataset "$data" --shuffle_mode --chunk "$i"
+    done
+done
 ```
 
 The `--shuffle_mode` flag performs shuffling and pre-batches the graphs in each chunk, since holding the entire dataset in memory and shuffling it together can be prohibitive for large datasets.

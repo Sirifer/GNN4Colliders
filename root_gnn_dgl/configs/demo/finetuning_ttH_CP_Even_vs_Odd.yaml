@@ -1,17 +1,17 @@
-Training_Name: ttH_CP_even_vs_odd_finetuning_12_process
-Training_Directory: trainings/ttH_vs_ttH_CPodd_TL_studies/ttH_CP_even_vs_odd_finetuning_12_process
+Training_Name: finetuning_ttH_CP_Even_vs_Odd
+Training_Directory: trainings/demo/finetuning_ttH_CP_Even_vs_Odd
 Model:
   module: models.GCN
   class: Transferred_Learning_Finetuning
   args:
-    pretraining_path: trainings/Hyy_BIG/model_epoch_59.pt
+    pretraining_path: trainings/demo/pretraining_multiclass/model_epoch_100.pt # update to the last epoch of the pretraining
     pretraining_model:
       module: models.GCN
       class: Edge_Network
       args:
         hid_size: 64
         in_size: 7
-        out_size: 13
+        out_size: 12
         n_layers: 4
         n_proc_steps: 4
     hid_size: 64
@@ -19,30 +19,30 @@ Model:
     out_size: 1
     n_layers: 4
     n_proc_steps: 4
-    dropout: 0.10
+    dropout: 0
 Training:
-  epochs: 200
+  epochs: 500
   batch_size: 1024
   learning_rate: 0.00001
   gamma: 0.99
 Datasets:
-  ttH: &dataset_defn
+  ttH_CP_Even: &dataset_defn
     module: root_gnn_base.dataset
     class: LazyDataset
-    shuffle_chunks: 10
+    shuffle_chunks: 3
     batch_size: 1024
     padding_mode: NONE #one of STEPS, FIXED, or NONE
     args: &dataset_args
-      name: ttH
+      name: ttH_CP_Even
       label: 0
       weight_var: weight
-      chunks: 100
-      buffer_size: 11
+      chunks: 3
+      buffer_size: 1
       file_names: ttH_NLO.root
       tree_name: output
       fold_var: Number
-      raw_dir: /global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/data/ntuples/Hyy_pretraining/
-      save_dir: /pscratch/sd/j/joshuaho/root_gnn/root_gnn_dgl/data/processed_ttH_vs_ttH_CPOdd_10M
+      raw_dir: /global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/data/ntuples/Hyy_pretraining/multilabel_10K/
+      save_dir: /pscratch/sd/j/joshuaho/GNN4Colliders/root_gnn_dgl/data/demo/finetuning_ttH_CP_Even_vs_Odd/
       node_branch_names:
         - [jet_pt, ele_pt, mu_pt, ph_pt, MET_met]
         - [jet_eta, ele_eta, mu_eta, ph_eta, 0]
@@ -54,14 +54,14 @@ Datasets:
       node_branch_types: [vector, vector, vector, vector, single]
       node_feature_scales: [1e-1, 1, 1, 1e-1, 1, 1, 1]
     folding:
-      n_folds: 10
-      test: [0, 1, 2]
+      n_folds: 3
+      test: [0]
       # validation: 1
-      train: [3,4,5,6,7,8,9]
-  ttH_CPodd:
+      train: [1, 2]
+  ttH_CP_Odd:
     <<: *dataset_defn
     args:
       <<: *dataset_args
-      name: ttH_CPodd
+      name: ttH_CP_Odd
       label: 1
       file_names: ttH_CPodd.root
