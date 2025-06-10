@@ -50,7 +50,6 @@ The entire demo can be ran with the command
 source run_demo.sh
 ``` 
 
-
 ## Data Preparation
 The first step in the process is to convert the events stored in ROOT files into DGL graph objects. This conversion is handled automatically by the Dataset objects during their creation, provided the graph data has not already been saved to disk. To accomplish this, a simple script is used to initialize the relevant Dataset object and then exit. This script needs to be executed for each data chunk in each dataset being used for training.
 
@@ -71,3 +70,24 @@ done
 The `--shuffle_mode` flag performs shuffling and pre-batches the graphs in each chunk, since holding the entire dataset in memory and shuffling it together can be prohibitive for large datasets.
 
 ## Training
+Training is run by `scripts/training_script`. `--preshuffle` tells it to use the preshuffled and batched graphs rather than shuffling and batching on the fly, and `--restart` can be used to force the training to start from the beginning rather than from the last available checkpoint.
+
+```bash
+python scripts/training_script.py --config configs/demo/pretraining_multiclass.yaml --preshuffle --nocompile --lazy
+```
+
+This step should produce the training directory `trainings/demo/pretraining_multiclass/` containing a copy of the config file, checkpoints (`model_epoch_*.pt`) with the model weights after each epoch of training, npz files with the GNN outputs for each event after each epoch of training, and two files `training.log` and `training.png` which summarize the model performance and convergence.
+
+## Inference
+Inference is done by `scripts/inference.py`. This script applies the model defined by `--config` onto the samples located at `--target`. A new set of samples with the GNN scores saved as the `--branch` in the ntuples will be created at `--destination`. The `--chunks` arguement will handel the inference in specified chunks.
+
+```bash
+python scripts/inference.py \
+    --target "/global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/data/ntuples/Hyy_pretraining/multilabel_10K/ttH_NLO.root" \
+    --destination "/global/cfs/projectdirs/atlas/joshua/GNN4Colliders/root_gnn_dgl/scores/ttH_NLO.root" \
+    --config "configs/demo/finetuning_ttH_CP_Even_vs_Odd.yaml" \
+    --chunks 1 \
+    --chunkno 0 \
+    --write \
+    --branch 'GNN_Score'
+```
