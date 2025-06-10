@@ -199,13 +199,14 @@ class RootDataset(DGLDataset):
             tracking = torch.stack(tracking)
             globals = torch.stack(globals)
             
-            # self.labels = labels
-            # self.tracking = tracking
-            # self.global_features = globals
-            # self.graphs = graphs
-
-            self.save_chunk(chunk_id, graphs, labels, tracking, globals)
-            
+            if (self.chunks > 1):
+                self.save_chunk(chunk_id, graphs, labels, tracking, globals)
+            else:
+                self.labels = labels
+                self.tracking = tracking
+                self.global_features = globals
+                self.graphs = graphs
+                self.save()
         return
         self.graphs = self.graph_chunks[0]
         for chunk in self.graph_chunks[1:]:
