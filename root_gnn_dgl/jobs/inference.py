@@ -97,32 +97,6 @@ config = [
 
 ]
 
-had_config = [
-    "configs/model_configs/run_3_ttH/v06/had/sb_yukawa_had_no_weights.yaml",
-    "configs/model_configs/run_3_ttH/v06/had/sb_yukawa_had_weights.yaml",
-    "configs/model_configs/run_3_ttH/v06/had/tHjb_CP_had_no_weights.yaml",
-    "configs/model_configs/run_3_ttH/v06/had/tHjb_CP_had_weights.yaml",
-    "configs/model_configs/run_3_ttH/v06/had/ttH_CP_had_no_weights.yaml",
-    "configs/model_configs/run_3_ttH/v06/had/ttH_CP_had_weights.yaml",
-    "configs/model_configs/run_3_ttH/v06/had/ttH_tHjb_tWH_CP_had_no_weights.yaml",
-    "configs/model_configs/run_3_ttH/v06/had/ttH_tHjb_tWH_CP_had_weights.yaml",
-    "configs/model_configs/run_3_ttH/v06/had/tWH_CP_had_no_weights.yaml",
-    "configs/model_configs/run_3_ttH/v06/had/tWH_CP_had_weights.yaml",
-]
-
-lep_config = [
-    "configs/model_configs/run_3_ttH/v06/lep/sb_yukawa_lep_no_weights.yaml",
-    "configs/model_configs/run_3_ttH/v06/lep/sb_yukawa_lep_weights.yaml",
-    "configs/model_configs/run_3_ttH/v06/lep/tHjb_CP_lep_no_weights.yaml",
-    "configs/model_configs/run_3_ttH/v06/lep/tHjb_CP_lep_weights.yaml",
-    "configs/model_configs/run_3_ttH/v06/lep/ttH_CP_lep_no_weights.yaml",
-    "configs/model_configs/run_3_ttH/v06/lep/ttH_CP_lep_weights.yaml",
-    "configs/model_configs/run_3_ttH/v06/lep/ttH_tHjb_tWH_CP_lep_no_weights.yaml",
-    "configs/model_configs/run_3_ttH/v06/lep/ttH_tHjb_tWH_CP_lep_weights.yaml",
-    "configs/model_configs/run_3_ttH/v06/lep/tWH_CP_lep_no_weights.yaml",
-    "configs/model_configs/run_3_ttH/v06/lep/tWH_CP_lep_weights.yaml",
-]
-
 # Branch names for each type of file
 branch_name = [
     "sb_yukawa_no_weights_score",
@@ -135,32 +109,6 @@ branch_name = [
     "ttH_tHjb_tWH_CP_weights_score",
     "tWH_CP_no_weights_score",
     "tWH_CP_weights_score",
-]
-
-had_branch_name = [
-    "sb_yukawa_had_no_weights_score",
-    "sb_yukawa_had_weights_score",
-    "tHjb_CP_had_no_weights_score",
-    "tHjb_CP_had_weights_score",
-    "ttH_CP_had_no_weights_score",
-    "ttH_CP_had_weights_score",
-    "ttH_tHjb_tWH_C_had_no_weights_score",
-    "ttH_tHjb_tWH_CP_had_weights_score",
-    "tWH_CP_had_no_weights_score",
-    "tWH_CP_had_weights_score",
-]
-
-lep_branch_name = [
-    "sb_yukawa_lep_no_weights_score",
-    "sb_yukawa_lep_weights_score",
-    "tHjb_CP_lep_no_weights_score",
-    "tHjb_CP_lep_weights_score",
-    "ttH_CP_lep_no_weights_score",
-    "ttH_CP_lep_weights_score",
-    "ttH_tHjb_tWH_CP_lep_no_weights_score",
-    "ttH_tHjb_tWH_CP_lep_weights_score",
-    "tWH_CP_lep_no_weights_score",
-    "tWH_CP_lep_weights_score",
 ]
 
 # MPI Initialization
