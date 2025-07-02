@@ -71,26 +71,18 @@ def process_yaml_file(config, base_directory, bash_script):
 
 def main():
     # Base directory containing the YAML files
-    base_directory = "/global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/configs/model_configs/"
+    base_directory = os.getcwd() + "/"
 
     # List of YAML configuration files (relative to the base directory)
     configs = [
-        # "run_3_ttH/v05/sb_yukawa_cp_no_weights.yaml",
-        # "run_3_ttH/v05/sb_yukawa_cp_weights.yaml",
-        # "run_3_ttH/v06/sb_yukawa_no_weights.yaml",
-        # "run_3_ttH/v06/sb_yukawa_weights.yaml",
-        # "run_3_ttH/v06/tHjb_CP_no_weights.yaml",
-        # "run_3_ttH/v06/tHjb_CP_weights.yaml",
-        "run_3_ttH/v06/ttH_CP_no_weights.yaml",
-        "run_3_ttH/v06/ttH_CP_weights.yaml",
-        "run_3_ttH/v06/tWH_CP_no_weights.yaml",
-        "run_3_ttH/v06/tWH_CP_weights.yaml",
-        "run_3_ttH/v06/ttH_tHjb_tWH_CP_no_weights.yaml",
-        "run_3_ttH/v06/ttH_tHjb_tWH_CP_weights.yaml",
+        "configs/stats_100K/pretraining_multiclass.yaml",
+        "configs/stats_100K/ttH_CP_even_vs_odd.yaml",
+        "configs/stats_all/pretraining_multiclass.yaml",
+        "configs/stats_all/ttH_CP_even_vs_odd.yaml",
     ]
 
     # Path to the bash script to be called
-    bash_script = "/global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/bash/prep_data.sh"  # Replace with the actual path to your bash script
+    bash_script = base_directory + "jobs/prep_data.sh"
 
     # Use ThreadPoolExecutor to process YAML files concurrently
     max_workers = os.cpu_count()  # Use all available CPU cores
