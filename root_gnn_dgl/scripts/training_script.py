@@ -11,9 +11,8 @@ import torch
 import torch.nn as nn
 
 import sys
-file_path = os.getcwd()
+file_path = "/global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/"
 sys.path.append(file_path)
-
 import root_gnn_base.batched_dataset as datasets
 from root_gnn_base import utils
 import root_gnn_base.custom_scheduler as lr_utils
@@ -28,6 +27,8 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
+
+print("import time: {:.4f} s".format(time.time() - start_time))
 
 def mem():
     print(f'Current memory usage: {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024 / 1024} GB')
@@ -75,9 +76,9 @@ def evaluate(val_loaders, model, config, device, epoch = -1):
         print(f"Loaded epoch {checkpoint['epoch']} from checkpoint")
 
     if 'Loss' not in config:
-        loss_fcn = nn.BCEWithLogitsLoss()
+        loss_fcn = nn.BCEWithLogitsLoss(reduction='none')
     else:
-        loss_fcn = utils.buildFromConfig(config['Loss'])
+        loss_fcn = utils.buildFromConfig(config['Loss'], {'reduction': 'none'})
     if len(val_loaders) == 0:
         return "No validation data"
     start = time.time()
@@ -143,10 +144,10 @@ def train(train_loaders, test_loaders, model, device, config, args, rank):
     restart = args.restart
     # define train/val samples, loss function and optimizer
     if 'Loss' not in config:
-        loss_fcn = nn.BCEWithLogitsLoss()
+        loss_fcn = nn.BCEWithLogitsLoss(reduction='none')
         finish_fn = torch.nn.Sigmoid()
     else:
-        loss_fcn = utils.buildFromConfig(config['Loss'])
+        loss_fcn = utils.buildFromConfig(config['Loss'], {'reduction':'none'})
         finish_fn = utils.buildFromConfig(config['Loss']['finish'])
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config['Training']['learning_rate'])
@@ -280,11 +281,13 @@ def train(train_loaders, test_loaders, model, device, config, args, rank):
             batch_start = time.time()
             logits = torch.tensor([])
             tlabels = torch.tensor([])
+            weights = torch.tensor([])
             batch_lengths = []
             for cycler in train_cyclers:
-                graph, label, _, global_feats = next(cycler)
+                graph, label, track, global_feats = next(cycler)
                 graph = graph.to(device)
                 label = label.to(device)
+                track = track.to(device)
                 global_feats = global_feats.to(device)
                 if is_padded: #Padding the globals to match padded graphs.
                     global_feats = torch.concatenate((global_feats, torch.zeros(1, len(global_feats[0])).to(device)))
@@ -292,9 +295,11 @@ def train(train_loaders, test_loaders, model, device, config, args, rank):
                 if (len(logits) == 0):
                     logits = model(graph, global_feats)
                     tlabels = label
+                    weights = track[:,1]
                 else:
                     logits = torch.concatenate((logits, model(graph, global_feats)), dim=0)
                     tlabels = torch.concatenate((tlabels, label), dim=0)
+                    weights = torch.concatenate((weights, track[:,1]), dim=0)
                 batch_lengths.append(logits.shape[0] - 1)
 
             if is_padded:
@@ -307,7 +312,35 @@ def train(train_loaders, test_loaders, model, device, config, args, rank):
                 tlabels = tlabels.to(torch.float)
             if loss_fcn.__class__.__name__ == 'CrossEntropyLoss':
                 tlabels = tlabels.to(torch.long)
-            loss = loss_fcn(logits, tlabels.to(device)) # changed logits from logits[:,0] and left labels as int for multiclass. Does this break binary? Yes.
+            # loss = loss_fcn(logits, tlabels.to(device)) # changed logits from logits[:,0] and left labels as int for multiclass. Does this break binary? Yes.
+            # loss = torch.sum(weights * loss) / torch.sum(weights)
+
+
+            if args.abs:
+                weights = torch.abs(weights)
+
+            loss = loss_fcn(logits, tlabels.to(device))
+            # Normalize loss within each label
+            unique_labels = torch.unique(tlabels)  # Get unique labels
+            normalized_loss = 0.0
+
+            for label in unique_labels:
+                # Mask for samples belonging to the current label
+                label_mask = (tlabels == label)
+                
+                # Extract weights and losses for the current label
+                label_weights = weights[label_mask]
+                label_losses = loss[label_mask]
+
+                
+                # Compute normalized loss for the current label
+                label_loss = torch.sum(label_weights * label_losses) / torch.sum(label_weights)
+                
+                # Add to the total normalized loss
+                normalized_loss += label_loss
+            loss = normalized_loss / len(unique_labels)
+
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -381,6 +414,9 @@ def train(train_loaders, test_loaders, model, device, config, args, rank):
             weights = torch.concatenate(gathered_weights)
 
         wgt_mask = weights > 0
+
+        if args.abs:
+            weights = torch.abs(weights)
 
         print(f"Num batches trained = {ibatch}")
 
@@ -472,7 +508,29 @@ def train(train_loaders, test_loaders, model, device, config, args, rank):
             print(contrastive_cluster_log_str, flush=True)
 
         # test_loss = loss_fcn(logits, labels.to(device))
+        # test_loss = loss_fcn(logits, labels)
+        # test_loss = torch.sum(weights * test_loss) / torch.sum(weights)
+
         test_loss = loss_fcn(logits, labels)
+        # Normalize loss within each label
+        unique_labels = torch.unique(labels)  # Get unique labels
+        normalized_loss = 0.0
+
+        for label in unique_labels:
+            # Mask for samples belonging to the current label
+            label_mask = (labels == label)
+            
+            # Extract weights and losses for the current label
+            label_weights = weights[label_mask]
+            label_losses = test_loss[label_mask]
+            # Compute normalized loss for the current label
+            label_loss = torch.sum(label_weights * label_losses) / torch.sum(label_weights)
+            
+            # Add to the total normalized loss
+            normalized_loss += label_loss
+        test_loss = normalized_loss / len(unique_labels)
+
+
         end = time.time()
         log_str = "Epoch {:05d} | LR {:.4e} | Loss {:.4f} | Accuracy {:.4f} | Test_Loss {:.4f} | Test_AUC {:.4f} | Time {:.4f} s".format(
                 epoch, optimizer.param_groups[0]['lr'], total_loss/ibatch, acc, test_loss, test_auc, end - start
@@ -664,6 +722,7 @@ def main(rank=0, args=None, world_size=1, port=24500, seed=12345):
     
     load_end = time.time()
     print("Load time: {:.4f} s".format(load_end - load_start))
+
     model = utils.buildFromConfig(config["Model"], {'sample_graph': gsamp, 'sample_global': global_samp, 'seed': seed}).to(device)
     if not args.nocompile:
         model = torch.compile(model)
@@ -728,6 +787,7 @@ if __name__ == "__main__":
     add_arg("--statistics", type=float, help="Size of training data")
     add_arg("--directory", type=str, help="Append to Training Directory")
     add_arg("--seed", type=int, default=2, help="Sets random seed")
+    add_arg("--abs", action="store_true", help="Use abs value of per-event weight")
 
     pargs = parser.parse_args()
     
