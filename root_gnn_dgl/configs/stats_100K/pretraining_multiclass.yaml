@@ -1,0 +1,134 @@
+Training_Name: pretraining_multiclass
+Training_Directory: trainings/stats_100K/pretraining_multiclass/
+Model:
+  module: models.GCN
+  class: Edge_Network
+  args:
+    hid_size: 64
+    in_size: 7
+    out_size: 12
+    n_layers: 4
+    n_proc_steps: 4
+    dropout: 0
+Loss:
+  module: torch.nn
+  class: CrossEntropyLoss
+  args: {}
+  finish: 
+    module: torch.nn
+    class: Softmax
+    args: {dim: 1}
+Training:
+  epochs: 500
+  batch_size: 1024
+  learning_rate: 0.0001
+  gamma: 0.99
+Datasets:
+  ttH: &dataset_defn
+    module: root_gnn_base.dataset
+    class: LazyDataset
+    shuffle_chunks: 1
+    padding_mode: NONE #one of STEPS, FIXED, or NONE
+    args: &dataset_args
+      name: ttH
+      label: 0
+      # weight_var: weight
+      chunks: 1
+      buffer_size: 0
+      file_names: ttH_NLO_inc.root
+      tree_name: output
+      fold_var: Number
+      raw_dir: /global/cfs/projectdirs/trn007/lbl_atlas/data/stats_100K/
+      save_dir: /global/cfs/projectdirs/trn007/lbl_atlas/data/processed_graphs/stats_100K/pretraining_multiclass/
+      node_branch_names:
+        - [jet_pt, ele_pt, mu_pt, ph_pt, MET_met]
+        - [jet_eta, ele_eta, mu_eta, ph_eta, 0]
+        - [jet_phi, ele_phi, mu_phi, ph_phi, MET_phi]
+        - CALC_E
+        - [jet_btag, 0, 0, 0, 0]
+        - [0, ele_charge, mu_charge, 0, 0]
+        - NODE_TYPE
+      node_branch_types: [vector, vector, vector, vector, single]
+      node_feature_scales: [1e-1, 1, 1, 1e-1, 1, 1, 1]
+    folding:
+      n_folds: 4
+      test: [0]
+      # validation: [1]
+      train: [1, 2, 3]
+  tHjb:
+    <<: *dataset_defn
+    args: 
+      <<: *dataset_args
+      name: tHjb
+      label: 1
+      file_names: tHjb_NLO_inc.root
+  ggF:
+    <<: *dataset_defn
+    args: 
+      <<: *dataset_args
+      name: ggF
+      label: 2
+      file_names: ggF_NLO_inc.root
+  VBF:
+    <<: *dataset_defn
+    args: 
+      <<: *dataset_args
+      name: VBF
+      label: 3
+      file_names: VBF_NLO_inc.root
+  WH:
+    <<: *dataset_defn
+    args: 
+      <<: *dataset_args
+      name: WH
+      label: 4
+      file_names: WH_NLO_inc.root
+  ZH:
+    <<: *dataset_defn
+    args: 
+      <<: *dataset_args
+      name: ZH
+      label: 5
+      file_names: ZH_NLO_inc.root
+  ttyy:
+    <<: *dataset_defn
+    args: 
+      <<: *dataset_args
+      name: ttyy_ch
+      label: 6
+      file_names: 'ttyy.root'
+  tttt:
+    <<: *dataset_defn
+    args: 
+      <<: *dataset_args
+      name: tttt
+      label: 7
+      file_names: 'tttt.root'
+  SingleT_schan:
+    <<: *dataset_defn
+    args: 
+      <<: *dataset_args
+      name: SingleT_schan
+      label: 8
+      file_names: 'SingleT_schan.root'
+  ttbar:
+    <<: *dataset_defn
+    args: 
+      <<: *dataset_args
+      name: ttbar
+      label: 9
+      file_names: 'ttbar.root'
+  ttW:
+    <<: *dataset_defn
+    args: 
+      <<: *dataset_args
+      name: ttW
+      label: 10
+      file_names: 'ttW.root'
+  ttt:
+    <<: *dataset_defn
+    args: 
+      <<: *dataset_args
+      name: ttt
+      label: 11
+      file_names: 'ttt.root'

@@ -1,0 +1,62 @@
+Training_Name: finetuning_ttH_CP_even_vs_odd
+Training_Directory: trainings/stats_all/finetuning_ttH_CP_even_vs_odd
+Model:
+  module: models.GCN
+  class: Transferred_Learning_Finetuning
+  args:
+    pretraining_path: trainings/stats_100K/pretraining_multiclass/model_epoch_100.pt # update to the last epoch of the pretraining
+    pretraining_model:
+      module: models.GCN
+      class: Edge_Network
+      args:
+        hid_size: 64
+        in_size: 7
+        out_size: 12
+        n_layers: 4
+        n_proc_steps: 4
+    hid_size: 64
+    in_size: 7
+    out_size: 1
+    n_layers: 4
+    n_proc_steps: 4
+    dropout: 0
+Datasets:
+  ttH_CP_even: &dataset_defn
+    module: root_gnn_base.dataset
+    class: LazyDataset
+    shuffle_chunks: 10
+    batch_size: 1024
+    padding_mode: NONE #one of STEPS, FIXED, or NONE
+    args: &dataset_args
+      name: ttH_CP_even
+      label: 0
+      # weight_var: weight
+      chunks: 10
+      buffer_size: 3
+      file_names: ttH_NLO.root
+      tree_name: output
+      fold_var: Number
+      raw_dir: /global/cfs/projectdirs/trn007/lbl_atlas/data/stats_all/
+      save_dir: /global/cfs/projectdirs/trn007/lbl_atlas/data/processed_graphs/stats_all/ttH_CP_even_vs_odd/
+      node_branch_names:
+        - [jet_pt, ele_pt, mu_pt, ph_pt, MET_met]
+        - [jet_eta, ele_eta, mu_eta, ph_eta, 0]
+        - [jet_phi, ele_phi, mu_phi, ph_phi, MET_phi]
+        - CALC_E
+        - [jet_btag, 0, 0, 0, 0]
+        - [0, ele_charge, mu_charge, 0, 0]
+        - NODE_TYPE
+      node_branch_types: [vector, vector, vector, vector, single]
+      node_feature_scales: [1e-1, 1, 1, 1e-1, 1, 1, 1]
+    folding:
+      n_folds: 4
+      test: [0]
+      # validation: 1
+      train: [1, 2, 3]
+  ttH_CP_odd:
+    <<: *dataset_defn
+    args:
+      <<: *dataset_args
+      name: ttH_CP_odd
+      label: 1
+      file_names: ttH_CPodd.root
