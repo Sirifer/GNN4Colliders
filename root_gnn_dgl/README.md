@@ -1,5 +1,13 @@
 # root_gnn_dgl
 
+## Data Directory (for Hackathon)
+`/global/cfs/projectdirs/trn007/lbl_atlas/data/`
+
+* `stats_all`: full statistics sample, ~10M events per process
+* `stats_100K`: reduced statistics sample, 100K events per process
+* `processed_graphs`: graphs that have already been processed
+* `scores`: a copy of the samples along with the GNN scores for each event
+
 ## Environment Setup
 
 The environment dependencies for this project are listed in `setup/environment.yml`. Follow the steps below to set up the environment:
