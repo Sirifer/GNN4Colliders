@@ -34,7 +34,7 @@ def call_bash_script(config, dataset_key, shuffle_chunks, bash_script):
     """
     try:
         # Construct the command to call the bash script
-        command = f"{bash_script} {config} {dataset_key} {shuffle_chunks} --drop_last"
+        command = f"{bash_script} {config} {dataset_key} {shuffle_chunks}"
 
         print(f"Executing command: {command}")  # Debugging: Print the command being executed
 
