@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 
 import sys
-file_path = "/global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/"
+file_path = os.getcwd()
 sys.path.append(file_path)
 import root_gnn_base.batched_dataset as datasets
 from root_gnn_base import utils

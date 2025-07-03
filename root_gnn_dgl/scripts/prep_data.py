@@ -1,5 +1,6 @@
 import sys
-file_path = "/global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl"
+import os
+file_path = os.getcwd()
 sys.path.append(file_path)
 
 import root_gnn_base.utils as utils
