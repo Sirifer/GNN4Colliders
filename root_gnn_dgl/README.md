@@ -41,14 +41,16 @@ Run the `setup/test_setup.py` script to confirm that all packages needed for tra
 python setup/test_setup.py
 ```
 ## Running the Demo
-The demo training is an example of our ML workflow, consisting of training a pretrained model, then finetuning it for an analysis task. The config files for the demo are located in the directory `configs/demo/`. The demo can be run on a login node.
+The demo training is an example of our ML workflow, consisting of training a pretrained model, then finetuning it for an analysis task, while also training a model for the analysis task from scratch. The config files for the demo are located in the directory `configs/stats_100K/`. The demo can be run on a login node on Perlmutter.
 
-The pretraining for the demo is a multiclass classification training on 12 datasets corresponding to 12 distinct physics processes, containing 10,000 simulated collision events each. The pretraining is then fintuned on a binary classification task between two datasets containing 10,000 simulated collision events each for two different processes, called ttH CP Even and ttH CP Odd.
+The pretraining for the demo is a multiclass classification training on 12 datasets corresponding to 12 distinct physics processes, containing 100,000 simulated collision events each. The pretraining is then fintuned on a binary classification task between two datasets containing 100,000 simulated collision events each for two different processes, called ttH CP Even and ttH CP Odd.
 
 The entire demo can be ran with the command
 ```bash
 source run_demo.sh
 ``` 
+
+This shell script can also be used as an example to run the entire workflow.
 
 ## Data Preparation
 The first step in the process is to convert the events stored in ROOT files into DGL graph objects. This conversion is handled automatically by the Dataset objects during their creation, provided the graph data has not already been saved to disk. To accomplish this, a simple script is used to initialize the relevant Dataset object and then exit. This script needs to be executed for each data chunk in each dataset being used for training.
@@ -69,25 +71,35 @@ done
 
 The `--shuffle_mode` flag performs shuffling and pre-batches the graphs in each chunk, since holding the entire dataset in memory and shuffling it together can be prohibitive for large datasets.
 
+You will probably see a `list index out of range error`. This is expected, and the program will still save your graphs to disk before throwing this error. Fixing this error is a WIP, but for now can be ignored
+```python
+dgl.save_graphs(str(graph_path).replace('.bin', f'_{self.process_chunks[i]}.bin'), self.graph_chunks[i], {'labels': self.label_chunks[i], 'tracking': self.tracking_chunks[i], 'global': self.global_chunks[i]})
+IndexError: list index out of range
+``` 
+
 ## Training
 Training is run by `scripts/training_script`. `--preshuffle` tells it to use the preshuffled and batched graphs rather than shuffling and batching on the fly, and `--restart` can be used to force the training to start from the beginning rather than from the last available checkpoint.
 
+Using the `--nocompile` arguement is also recommended, as using `torch.compile()` requires padding the graphs beforehand during data processing.
+
 ```bash
-python scripts/training_script.py --config configs/demo/pretraining_multiclass.yaml --preshuffle --nocompile --lazy
+python scripts/training_script.py --config configs/stats_100K/pretraining_multiclass.yaml --preshuffle --nocompile --lazy
 ```
 
-This step should produce the training directory `trainings/demo/pretraining_multiclass/` containing a copy of the config file, checkpoints (`model_epoch_*.pt`) with the model weights after each epoch of training, npz files with the GNN outputs for each event after each epoch of training, and two files `training.log` and `training.png` which summarize the model performance and convergence.
+This step should produce the training directory `trainings/stats_100K/pretraining_multiclass/` containing a copy of the config file, checkpoints (`model_epoch_*.pt`) with the model weights after each epoch of training, npz files with the GNN outputs for each event after each epoch of training, and two files `training.log` and `training.png` which summarize the model performance and convergence.
 
 ## Inference
 Inference is done by `scripts/inference.py`. This script applies the model defined by `--config` onto the samples located at `--target`. A new set of samples with the GNN scores saved as the `--branch` in the ntuples will be created at `--destination`. The `--chunks` arguement will handel the inference in specified chunks.
 
 ```bash
 python scripts/inference.py \
-    --target "/global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/data/ntuples/Hyy_pretraining/multilabel_10K/ttH_NLO.root" \
-    --destination "/global/cfs/projectdirs/atlas/joshua/GNN4Colliders/root_gnn_dgl/scores/ttH_NLO.root" \
-    --config "configs/demo/finetuning_ttH_CP_Even_vs_Odd.yaml" \
+    --target "/global/cfs/projectdirs/trn007/lbl_atlas/data/stats_100K/ttH_NLO.root" \
+    --destination "/global/cfs/projectdirs/trn007/lbl_atlas/data/scores/stats_100K/ttH_NLO.root" \
+    --config "configs/stats_100K/finetuning_ttH_CP_even_vs_odd.yaml" \
     --chunks 1 \
     --chunkno 0 \
     --write \
     --branch 'GNN_Score'
 ```
+
+You can also input a list as the `--config` and the `--branch` to simultaneously apply multiple models onto the same set of samples. An example on how to do this in shell script is in the `run_demo.sh` file.
