@@ -3,7 +3,7 @@ import os
 import subprocess
 import argparse
 
-def check_dataset_files(yaml_file, rerun = False):
+def check_dataset_files(yaml_file, rerun=False):
     """
     Check if all required .bin files exist for each dataset in the YAML file.
     """
@@ -29,50 +29,59 @@ def check_dataset_files(yaml_file, rerun = False):
             test_folds = folding.get('test', [])
             train_folds = folding.get('train', [])
 
-            # Check for chunk files
+            print(f"\n== Checking dataset: {dataset_name} ==")
+            print(f"  save_dir: {save_dir}")
+            print(f"  chunks: {chunks}")
+            print(f"  n_folds: {n_folds}")
+            print(f"  test_folds: {test_folds}")
+            print(f"  train_folds: {train_folds}")
+
             missing_files = []
+
+            # 1. Check for chunk files
             for chunk in range(chunks):
                 chunk_file = os.path.join(save_dir, f"{dataset_name}_{chunk}.bin")
                 if not os.path.exists(chunk_file):
                     missing_files.append(chunk_file)
 
-            # Check for prebatched files for each fold
-            for fold in range(n_folds):
-                # Test files
-                if fold in test_folds:
-                    test_file = os.path.join(save_dir, f"{dataset_name}_prebatched_padded_{fold}_n_{n_folds}_f_{'_'.join(map(str, test_folds))}.bin")
-                    if not os.path.exists(test_file):
-                        missing_files.append(test_file)
-
-                # Train files
-                if fold in train_folds:
-                    train_file = os.path.join(save_dir, f"{dataset_name}_prebatched_padded_{fold}_n_{n_folds}_f_{'_'.join(map(str, train_folds))}.bin")
-                    if not os.path.exists(train_file):
-                        missing_files.append(train_file)
+            # 2. Check for prebatched fold files (test and train)
+            #    Naming: dataset_name_prebatched_padded_{fold}_n_{n_folds}_f_{foldlist}.bin
+            fold_types = [('test', test_folds), ('train', train_folds)]
+            for fold_type, folds in fold_types:
+                if not folds:
+                    continue
+                foldlist_str = '_'.join(map(str, folds))
+                for i in range(chunks):
+                    prebatched_file = os.path.join(
+                        save_dir,
+                        f"{dataset_name}_prebatched_padded_{i}_n_{n_folds}_f_{foldlist_str}.bin"
+                    )
+                    if not os.path.exists(prebatched_file):
+                        missing_files.append(prebatched_file)
 
             # Print results for the current dataset
             if missing_files:
                 all_files_exist = False
-                print(f"Missing files for dataset '{dataset_name}':")
+                print(f"  Missing files for dataset '{dataset_name}':")
                 for missing_file in missing_files:
-                    print(f"  - {missing_file}")
-                
-                # Reprocess the dataset with drop_last=False
-                if (rerun):
-                    print(f"Reprocessing dataset '{dataset_name}")
+                    print(f"    - {missing_file}")
+
+                # Optionally rerun data prep
+                if rerun:
+                    print(f"  Reprocessing dataset '{dataset_name}' ...")
                     prep_command = f"bash/prep_data.sh {yaml_file} {dataset_name} {chunks}"
                     try:
                         subprocess.run(prep_command, shell=True, check=True)
                     except subprocess.CalledProcessError as e:
-                        print(f"Could Not Reprocess '{dataset_name}': {e}")
+                        print(f"  Could NOT reprocess '{dataset_name}': {e}")
             else:
-                print(f"All files exist for dataset '{dataset_name}'.")
+                print(f"  All files exist for dataset '{dataset_name}'.")
 
         # Final summary
         if all_files_exist:
-            print("All required files exist for all datasets.")
+            print("\nAll required files exist for all datasets.")
         else:
-            print("Some files are missing.")
+            print("\nSome files are missing.")
 
     except Exception as e:
         print(f"Error processing {yaml_file}: {e}")
@@ -81,12 +90,9 @@ def main(pargs):
     # Base directory containing the YAML files
     base_directory = os.getcwd() + "/configs/"
 
-    if (pargs.configs):
-        # If pargs is a comma-separated list, split it
+    if pargs.configs:
         configs = [p.strip() for p in pargs.configs.split(',')]
-
     else:
-        # List of YAML configuration files (relative to the base directory)
         configs = [
             "attention/ttH_CP_even_vs_odd.yaml",
 
@@ -99,11 +105,10 @@ def main(pargs):
             "stats_all/ttH_CP_even_vs_odd.yaml",
         ]
 
-    # Loop through each config file
     for config in configs:
-        yaml_file = os.path.join(base_directory, config)  # Construct full path
+        yaml_file = os.path.join(base_directory, config)
         if os.path.exists(yaml_file):
-            print(f"Processing file: {config}")
+            print(f"\nProcessing file: {config}")
             check_dataset_files(yaml_file, pargs.rerun)
         else:
             print(f"File not found: {yaml_file}")
@@ -118,10 +123,8 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--rerun", "-r",
-        type=bool,
-        default=False,
-        required=False,
-        help="Automatically re-runs data processing to fix missing files"
+        action='store_true',   # Correct way for a boolean flag
+        help="Automatically re-run data processing to fix missing files"
     )
     args = parser.parse_args()
     main(args)
