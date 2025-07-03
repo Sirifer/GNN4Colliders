@@ -114,7 +114,7 @@ You can also input a list as the `--config` and the `--branch` to simultaneously
 
 ## Running Jobs + Parallelization
 
-Perlmutter job scripts are located in `jobs/`. Job scripts are separated into 3 categories: `pre_data`, `training`, and `inference`. 
+Perlmutter job scripts are located in `jobs/`. Job scripts are separated into 3 categories: `prep_data`, `training`, and `inference`. 
 
 The different shell scripts show how to request GPU or CPU nodes from Perlmutter, which are reqired for running jobs. 
 
