@@ -23,7 +23,7 @@ Model:
 Training:
   epochs: 500
   batch_size: 1024
-  learning_rate: 0.0001
+  learning_rate: 0.00001
   gamma: 0.99
 Datasets:
   ttH_CP_even: &dataset_defn
