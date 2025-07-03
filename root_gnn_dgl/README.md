@@ -134,4 +134,4 @@ When running a multinode training, remember to use the `--multinode` run-time ar
 
 ### Inference Parallelization
 
-Model inference parallelization is done with `mpi4py` (currently not listed in the conda environment requirements).
+Model inference parallelization is done with `mpi4py` (currently not listed in the conda environment requirements). You can run the parallel inference script with `mpirun -np <num_nodes> python jobs/inference/run_inference.py`.
