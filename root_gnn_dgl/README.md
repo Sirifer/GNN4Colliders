@@ -89,6 +89,8 @@ dgl.save_graphs(str(graph_path).replace('.bin', f'_{self.process_chunks[i]}.bin'
 IndexError: list index out of range
 ``` 
 
+To make sure you have all the necessary graphs to train, you can use the `scripts/check_dataset_files.py` script to ensure all graphs are properly processed. Using the `--rerun` runtime arguement will tell the script to automically re-processes any missing files.
+
 ## Training
 Training is run by `scripts/training_script`. `--preshuffle` tells it to use the preshuffled and batched graphs rather than shuffling and batching on the fly, and `--restart` can be used to force the training to start from the beginning rather than from the last available checkpoint.
 
