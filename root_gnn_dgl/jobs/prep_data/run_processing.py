@@ -34,7 +34,7 @@ def call_bash_script(config, dataset_key, shuffle_chunks, bash_script):
     """
     try:
         # Construct the command to call the bash script
-        command = f"{bash_script} configs/model_configs/{config} {dataset_key} {shuffle_chunks} --drop_last"
+        command = f"{bash_script} {config} {dataset_key} {shuffle_chunks} --drop_last"
 
         print(f"Executing command: {command}")  # Debugging: Print the command being executed
 
@@ -75,14 +75,15 @@ def main():
 
     # List of YAML configuration files (relative to the base directory)
     configs = [
-        "configs/stats_100K/pretraining_multiclass.yaml",
-        "configs/stats_100K/ttH_CP_even_vs_odd.yaml",
-        "configs/stats_all/pretraining_multiclass.yaml",
-        "configs/stats_all/ttH_CP_even_vs_odd.yaml",
+        # "configs/stats_100K/pretraining_multiclass.yaml",
+        # "configs/stats_100K/ttH_CP_even_vs_odd.yaml",
+        # "configs/stats_all/pretraining_multiclass.yaml",
+        # "configs/stats_all/ttH_CP_even_vs_odd.yaml",
+        "configs/attention/ttH_CP_even_vs_odd.yaml",
     ]
 
     # Path to the bash script to be called
-    bash_script = base_directory + "jobs/prep_data.sh"
+    bash_script = base_directory + "jobs/prep_data/prep_data.sh"
 
     # Use ThreadPoolExecutor to process YAML files concurrently
     max_workers = os.cpu_count()  # Use all available CPU cores
