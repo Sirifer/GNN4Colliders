@@ -49,7 +49,11 @@ Run the `setup/test_setup.py` script to confirm that all packages needed for tra
 python setup/test_setup.py
 ```
 ## Running the Demo
-The demo training is an example of our ML workflow, consisting of training a pretrained model, then finetuning it for an analysis task, while also training a model for the analysis task from scratch. The config files for the demo are located in the directory `configs/stats_100K/`. The demo can be run on a login node on Perlmutter.
+The demo training is an example of our ML workflow, consisting of training a pretrained model, then finetuning it for an analysis task, while also training a model for the analysis task from scratch. The config files for the demo are located in the directory `configs/stats_100K/`. The demo can be run on a login node on Perlmutter (if enough GPU memory is availble).
+
+To check login node GPU memory availability, use the command `nvidia-smi`. If there is not enough memory available, you can switch to another login node with the command `ssh login**`, where `**` is a number between 0 and 39.
+
+For better performance, it is recommended to run the training and inference of the demo on a shared interactive node, where you have access to one exclusive GPU. An interactive node can be requested using the shell script in `jobs/interactive.sh`.
 
 The pretraining for the demo is a multiclass classification training on 12 datasets corresponding to 12 distinct physics processes, containing 100,000 simulated collision events each. The pretraining is then fintuned on a binary classification task between two datasets containing 100,000 simulated collision events each for two different processes, called ttH CP Even and ttH CP Odd.
 
