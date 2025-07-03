@@ -27,14 +27,14 @@ Datasets:
   ttH: &dataset_defn
     module: root_gnn_base.dataset
     class: LazyDataset
-    shuffle_chunks: 1
+    shuffle_chunks: 3
     padding_mode: NONE #one of STEPS, FIXED, or NONE
     args: &dataset_args
       name: ttH
       label: 0
       # weight_var: weight
-      chunks: 1
-      buffer_size: 0
+      chunks: 3
+      buffer_size: 2
       file_names: ttH_NLO_inc.root
       tree_name: output
       fold_var: Number
