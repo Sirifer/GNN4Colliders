@@ -13,7 +13,7 @@ done
 
 python scripts/training_script.py --config configs/stats_100K/pretraining_multiclass.yaml --preshuffle --nocompile --lazy
 
-# Finetuning
+# From Scratch Training
 
 datasets=("ttH_CP_even" "ttH_CP_odd")
 chunks=3
@@ -26,6 +26,8 @@ for data in "${datasets[@]}"; do
 done
 
 python scripts/training_script.py --config configs/stats_100K/ttH_CP_even_vs_odd.yaml --preshuffle --nocompile --lazy
+
+# Finetuning Training
 
 python scripts/training_script.py --config configs/stats_100K/finetuning_ttH_CP_even_vs_odd.yaml --preshuffle --nocompile --lazy
 
