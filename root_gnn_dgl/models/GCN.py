@@ -1269,7 +1269,8 @@ class Attention_Edge_Network(nn.Module):
         h_original_shape = h.shape
         num_graphs = len(dgl.unbatch(g))
         num_nodes = g.batch_num_nodes()[0].item()
-        padding_mask = g.ndata['padding_mask'] > 0
+        padding_mask = g.ndata['padding_mask'].bool()
+
         padding_mask = torch.reshape(padding_mask, (num_graphs, num_nodes))
 
         for i in range(self.n_proc_steps):
