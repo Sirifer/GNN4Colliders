@@ -111,3 +111,23 @@ python scripts/inference.py \
 ```
 
 You can also input a list as the `--config` and the `--branch` to simultaneously apply multiple models onto the same set of samples. An example on how to do this in shell script is in the `run_demo.sh` file.
+
+## Running Jobs + Parallelization
+
+Perlmutter job scripts are located in `jobs/`. Job scripts are separated into 3 categories: `pre_data`, `training`, and `inference`. 
+
+The different shell scripts show how to request GPU or CPU nodes from Perlmutter, which are reqired for running jobs. 
+
+### Data Prep Parallelization
+
+The preparation of data can be parallelized across several threads on a CPU. The parallelization is handled by python's `concurrent.futures.ThreadPoolExecutor`.
+
+### Training Parallelization
+
+Parallelization of GNN training is implemented with `torch.DistributedDataParallel`. The job submission script is in `jobs/training/multinode/submit.sh`. 
+
+When running a multinode training, remember to use the `--multinode` run-time arguement for the training script.
+
+### Inference Parallelization
+
+Model inference parallelization is done with `mpi4py` (currently not listed in the conda environment requirements).
