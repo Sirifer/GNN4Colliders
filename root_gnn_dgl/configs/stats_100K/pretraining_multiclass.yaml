@@ -94,7 +94,7 @@ Datasets:
     <<: *dataset_defn
     args: 
       <<: *dataset_args
-      name: ttyy_ch
+      name: ttyy
       label: 6
       file_names: 'ttyy.root'
   tttt:
