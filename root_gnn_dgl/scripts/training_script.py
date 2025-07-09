@@ -45,10 +45,10 @@ def gpu_mem():
     #     except:
     #         pass
     print(f'Current GPU memory usage: {torch.cuda.memory_allocated() / 1024 / 1024 / 1024} GB')
-    print(f'Current GPU cache usage: {torch.cuda.memory_cached() / 1024 / 1024 / 1024} GB')
-    print(f'Current GPU max memory usage: {torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024} GB')
-    print(f'Current GPU max cache usage: {torch.cuda.max_memory_cached() / 1024 / 1024 / 1024} GB')
-    print(f'Numel in current tensors: {sum}')
+    # print(f'Current GPU cache usage: {torch.cuda.memory_cached() / 1024 / 1024 / 1024} GB')
+    # print(f'Current GPU max memory usage: {torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024} GB')
+    # print(f'Current GPU max cache usage: {torch.cuda.max_memory_cached() / 1024 / 1024 / 1024} GB')
+    # print(f'Numel in current tensors: {sum}')
     mem()
 
 
@@ -263,11 +263,20 @@ def train(train_loaders, test_loaders, model, device, config, args, rank):
     for epoch in range(starting_epoch, config['Training']['epochs']):
         start = time.time()
         run = start
+        if (args.profile):
+            if (epoch == 2):
+                torch.cuda.cudart().cudaProfilerStart()
+            if (epoch == 3):
+                print("Done profiling")
+                torch.cuda.cudart().cudaProfilerStop()
+            torch.cuda.nvtx.range_push("Epoch Start")
+            print("executed push")
+
         if (args.multigpu or args.multinode):
             dist.barrier()
-        if (epoch == 2):
-            # torch.cuda.cudart().cudaProfilerStart()
-            pass
+        
+        if (epoch == 5):
+            exit
 
         # training
         model.train()
@@ -292,6 +301,8 @@ def train(train_loaders, test_loaders, model, device, config, args, rank):
                 if is_padded: #Padding the globals to match padded graphs.
                     global_feats = torch.concatenate((global_feats, torch.zeros(1, len(global_feats[0])).to(device)))
                 load = time.time()
+                if (args.profile):
+                    torch.cuda.nvtx.range_push("Model Forward")
                 if (len(logits) == 0):
                     logits = model(graph, global_feats)
                     tlabels = label
@@ -301,6 +312,9 @@ def train(train_loaders, test_loaders, model, device, config, args, rank):
                     tlabels = torch.concatenate((tlabels, label), dim=0)
                     weights = torch.concatenate((weights, track[:,1]), dim=0)
                 batch_lengths.append(logits.shape[0] - 1)
+
+                if (args.profile):
+                    torch.cuda.nvtx.range_pop() # popping model forward
 
             if is_padded:
                 keepmask = torch.full_like(logits[:,0], True, dtype=torch.bool)
@@ -340,11 +354,15 @@ def train(train_loaders, test_loaders, model, device, config, args, rank):
                 normalized_loss += label_loss
             loss = normalized_loss / len(unique_labels)
 
-
+            if (args.profile):
+                torch.cuda.nvtx.range_push("Model Backward")
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             total_loss += loss.detach().cpu().item()
+
+            if (args.profile):
+                torch.cuda.nvtx.range_pop() # pop model backward
             ibatch += 1
             cumulative_times[0] += batch_start - run
             cumulative_times[1] += load - batch_start
@@ -366,6 +384,10 @@ def train(train_loaders, test_loaders, model, device, config, args, rank):
         labels = []
         weights = []
         model.eval()
+
+        if (args.profile):
+            torch.cuda.nvtx.range_push("Model Evaluation")
+
         with torch.no_grad():
             for loader in test_loaders:
                 for batch, label, track, global_feats in loader:
@@ -385,6 +407,9 @@ def train(train_loaders, test_loaders, model, device, config, args, rank):
                     weights.append(track[:,1])
         eval_end = time.time()
         cumulative_times[3] += eval_end - run
+
+        if (args.profile):
+            torch.cuda.nvtx.range_pop() # pop evaluation
 
         if scores == []: #If validation set is empty.
             continue
@@ -578,6 +603,10 @@ def train(train_loaders, test_loaders, model, device, config, args, rank):
         if (custom_scheduler):
             custom_scheduler.step(model, {'test_auc':test_auc})
         scheduler.step()
+
+        if (args.profile):
+            torch.cuda.nvtx.range_pop() # pop epoch
+            print("executed pop")
 
     print(f"Load: {cumulative_times[0]:.4f} s")
     print(f"Batch: {cumulative_times[1]:.4f} s")
@@ -788,6 +817,7 @@ if __name__ == "__main__":
     add_arg("--directory", type=str, help="Append to Training Directory")
     add_arg("--seed", type=int, default=2, help="Sets random seed")
     add_arg("--abs", action="store_true", help="Use abs value of per-event weight")
+    add_arg("--profile", action="store_true", help="use nsight systems profiler")
 
     pargs = parser.parse_args()
     
