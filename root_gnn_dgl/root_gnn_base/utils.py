@@ -8,10 +8,16 @@ import dgl
 import signal
 
 def buildFromConfig(conf, run_time_args = {}):
+    device = run_time_args.get('device', 'cpu')
     if 'module' in conf:
         module = importlib.import_module(conf['module'])
         cls = getattr(module, conf['class'])
-        return cls(**conf['args'], **run_time_args)
+        args = conf['args'].copy()
+        if 'weight' in args and isinstance(args['weight'], list):
+            args['weight'] = torch.tensor(args['weight'], dtype=torch.float, device=device)
+        # Remove device from run_time_args to not pass it to the class
+        run_time_args = {k: v for k, v in run_time_args.items() if k != 'device'}
+        return cls(**args, **run_time_args)
     else:
         print('No module specified in config. Returning None.')
 
@@ -177,21 +183,101 @@ def get_specific_epoch(config, target_epoch, device = None, from_ryan = False):
             checkpoint = torch.load(os.path.join(config['Training_Directory'], f'model_epoch_{last_epoch}.pt'), map_location=device)
     return last_epoch, checkpoint
 
-#Convert training logs into dict for plotting.
+#Return the index and checkpoint of the nest epoch.
+def get_best_epoch(config, var='Test_AUC', mode='max', device=None, from_ryan=False):
+    # Read the training log
+    log = read_log(config)
+    
+    # Ensure the specified variable exists in the log
+    if var not in log:
+        raise ValueError(f"Variable '{var}' not found in the training log.")
+    
+    # Determine the target epoch based on the mode ('max' or 'min')
+    if mode == 'max':
+        target_epoch = int(np.argmax(log[var]))
+        print(f"Best epoch based on '{var}' (max): {target_epoch} with value: {log[var][target_epoch]}")
+    elif mode == 'min':
+        target_epoch = int(np.argmin(log[var]))
+        print(f"Best epoch based on '{var}' (min): {target_epoch} with value: {log[var][target_epoch]}")
+    else:
+        raise ValueError(f"Invalid mode '{mode}'. Expected 'max' or 'min'.")
+    
+    # Initialize checkpoint retrieval variables
+    last_epoch = -1
+    checkpoint = None
+
+    # Iterate through epochs up to the target epoch to find the corresponding checkpoint
+    for ep in range(target_epoch + 1):
+        if from_ryan:
+            checkpoint_path = os.path.join(
+                '/global/cfs/cdirs/atlas/berobert/root_gnn_dgl/',
+                config['Training_Directory'],
+                f'model_epoch_{ep}.pt'
+            )
+        else:
+            checkpoint_path = os.path.join(
+                config['Training_Directory'],
+                f'model_epoch_{ep}.pt'
+            )
+        
+        if os.path.exists(checkpoint_path):
+            last_epoch = ep
+        else:
+            print(f'Epoch {ep} not found. Stopping at epoch {last_epoch}')
+            print('File not found: ', checkpoint_path)
+            break
+
+    # Load the checkpoint for the last valid epoch
+    if last_epoch >= 0:
+        if from_ryan:
+            checkpoint_path = os.path.join(
+                '/global/cfs/cdirs/atlas/berobert/root_gnn_dgl/',
+                config['Training_Directory'],
+                f'model_epoch_{last_epoch}.pt'
+            )
+        else:
+            checkpoint_path = os.path.join(
+                config['Training_Directory'],
+                f'model_epoch_{last_epoch}.pt'
+            )
+        
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+    
+    return last_epoch, checkpoint
+
 def read_log(config):
     lines = []
     with open(config['Training_Directory'] + '/training.log', 'r') as f:
         lines = f.readlines()
-    lines = [ l for l in lines if 'Epoch' in l ]
-    nlines = len(lines)
+    lines = [l for l in lines if 'Epoch' in l]
+    
     labels = []
     for field in lines[0].split('|'):
         labels.append(field.split()[0])
-    log = {label : np.zeros(nlines) for label in labels}
-    for i, line in enumerate(lines):
+    
+    # Initialize log as a dictionary with empty lists
+    log = {label: [] for label in labels}
+    
+    for line in lines:
+        valid_row = True  # Flag to check if the row is valid
+        temp_row = {}  # Temporary row to store values before adding to log
+        
         for field in line.split('|'):
             spl = field.split()
-            log[spl[0]][i] = float(spl[1])
+            try:
+                temp_row[spl[0]] = float(spl[1])
+            except (ValueError, IndexError):
+                valid_row = False  # Mark row as invalid if conversion fails
+                break
+        
+        if valid_row:  # Only add the row if all fields are valid
+            for label in labels:
+                log[label].append(temp_row.get(label, np.nan))  # Handle missing labels gracefully
+    
+    # Convert lists to numpy arrays for consistency
+    for label in labels:
+        log[label] = np.array(log[label])
+    
     return log
 
 #Plot training logs.
