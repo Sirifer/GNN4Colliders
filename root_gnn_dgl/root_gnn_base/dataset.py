@@ -160,6 +160,7 @@ class RootDataset(DGLDataset):
         self.global_chunks = []
         chunk_id = -1
         for chunk in chunks:
+            print('Processing chunk {}/{}'.format(chunk_id + 1, len(chunks)), flush=True)
             chunk_id += 1
             graphs = []
             labels = []
@@ -196,6 +197,13 @@ class RootDataset(DGLDataset):
             labels = torch.tensor(labels)
             tracking = torch.stack(tracking)
             globals = torch.stack(globals)
+
+            self.graph_chunks.append(graphs)
+            self.label_chunks.append(labels)
+            self.tracking_chunks.append(tracking)
+            self.global_chunks.append(globals)
+            self.counts.append(len(graphs))
+            
             if (self.chunks > 1):
                 self.save_chunk(chunk_id, graphs, labels, tracking, globals)
             else:
@@ -216,6 +224,7 @@ class RootDataset(DGLDataset):
         else:
             for i in range(len(self.process_chunks)):
                 print(f'Saving dataset to {os.path.join(self.save_dir, self.name + f"_{self.process_chunks[i]}.bin")}')
+
                 dgl.save_graphs(str(graph_path).replace('.bin', f'_{self.process_chunks[i]}.bin'), self.graph_chunks[i], {'labels': self.label_chunks[i], 'tracking': self.tracking_chunks[i], 'global': self.global_chunks[i]})
 
     def save_chunk(self, chunk_id, graphs, labels, tracking, globals):

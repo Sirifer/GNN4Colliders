@@ -16,7 +16,7 @@ def GetBatchedLoader(dataset, batch_size, mask_fn = None, drop_last=True, **kwar
 
 #Dataset which contains prebatched shuffled graphs. Cannot be saved to disk, else batching info is lost.
 class PreBatchedDataset(DGLDataset):
-    def __init__(self, start_dataset, batch_size, mask_fn = None, drop_last=True, save_to_disk = True, suffix = '', chunks = 1, chunkno = -1, shuffle = True, padding_mode = 'NONE', **kwargs):
+    def __init__(self, start_dataset, batch_size, mask_fn = None, drop_last=True, save_to_disk = True, suffix = '', chunks = 1, chunkno = -1, shuffle = True, padding_mode = 'NONE', hidden_size=64, **kwargs):
         print(f'Unused kwargs: {kwargs}')
         self.start_dataset = start_dataset
         self.start_dataset.load()
@@ -34,6 +34,7 @@ class PreBatchedDataset(DGLDataset):
         self.suffix = suffix
         self.current_chunk = None
         self.current_chunk_idx = -1
+        self.hid_size = hidden_size
         super().__init__(name = start_dataset.name + '_prebatched_padded', save_dir=start_dataset.save_dir)
 
     def process(self):
@@ -86,7 +87,7 @@ class PreBatchedDataset(DGLDataset):
             for i in range(len(self.graphs)):
                 unbatched_g = dgl.unbatch(self.graphs[i])
                 max_num_nodes = max(g.number_of_nodes() for g in unbatched_g)
-                self.graphs[i] = utils.pad_batch_num_nodes(self.graphs[i], max_num_nodes)
+                self.graphs[i] = utils.pad_batch_num_nodes(self.graphs[i], max_num_nodes, hid_size=self.hid_size)
                 self.batch_num_nodes.append(self.graphs[i].batch_num_nodes())
                 self.batch_num_edges.append(self.graphs[i].batch_num_edges())
         else:

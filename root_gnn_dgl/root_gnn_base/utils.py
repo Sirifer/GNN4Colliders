@@ -92,7 +92,7 @@ def pad_batch(batch, edges = 104000, nodes = 16000):
     return make_padding_graph(batch, pad_nodes, pad_edges)
 
 def pad_batch_num_nodes(batch, max_num_nodes, hid_size = 64):
-    print(f"Padding each graph to have {max_num_nodes} nodes")
+    print(f"Padding each graph to have {max_num_nodes} nodes. Using hidden size {hid_size}.")
 
     unbatched = dgl.unbatch(batch)
     for g in unbatched:

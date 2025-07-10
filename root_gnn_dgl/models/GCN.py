@@ -1154,6 +1154,7 @@ class Attention(nn.Module):
         self.n_proc_steps = n_proc_steps
         self.layers = nn.ModuleList()
         self.has_global = sample_global.shape[1] != 0
+        self.hid_size = hid_size
         gl_size = sample_global.shape[1] if self.has_global else 1
 
         #encoder
@@ -1196,7 +1197,7 @@ class Attention(nn.Module):
                 batch_num_nodes.append(non_padded_count)
                 start_idx = end_idx
             batch_num_nodes = torch.tensor(batch_num_nodes, device = g.ndata['features'].device)
-            sum_weights = batch_num_nodes[:, None].repeat(1, 64)
+            sum_weights = batch_num_nodes[:, None].repeat(1, self.hid_size)
             global_feats = batch_num_nodes[:, None].to(torch.float)
 
         h_global = self.global_encoder(global_feats)
@@ -1364,6 +1365,7 @@ class Transferred_Learning_Attention(nn.Module):
         self.n_proc_steps = n_proc_steps
         self.layers = nn.ModuleList()
         self.has_global = sample_global.shape[1] != 0
+        self.hid_size = hid_size
         gl_size = sample_global.shape[1] if self.has_global else 1
 
         self.learning_rate = learning_rate
@@ -1440,7 +1442,7 @@ class Transferred_Learning_Attention(nn.Module):
                 batch_num_nodes.append(non_padded_count)
                 start_idx = end_idx
             batch_num_nodes = torch.tensor(batch_num_nodes, device = g.ndata['features'].device)
-            sum_weights = batch_num_nodes[:, None].repeat(1, 64)
+            sum_weights = batch_num_nodes[:, None].repeat(1, self.hid_size)
             global_feats = batch_num_nodes[:, None].to(torch.float)
 
         h_global = self.TL_global_encoder(global_feats)
@@ -1856,6 +1858,7 @@ class Clustering(nn.Module):
         self.n_layers = n_layers
         self.n_proc_steps = n_proc_steps
         self.layers = nn.ModuleList()
+        self.hid_size = hid_size
         if (len(sample_global) == 0):
             self.has_global = False
         else:
@@ -1899,7 +1902,7 @@ class Clustering(nn.Module):
                 batch_num_nodes.append(non_padded_count)
                 start_idx = end_idx
             batch_num_nodes = torch.tensor(batch_num_nodes, device = g.ndata[features].device)
-            sum_weights = batch_num_nodes[:, None].repeat(1, 64)
+            sum_weights = batch_num_nodes[:, None].repeat(1, self.hid_size)
             global_feats = batch_num_nodes[:, None].to(torch.float)
 
         h_global = self.global_encoder(global_feats)
