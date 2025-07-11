@@ -496,6 +496,8 @@ def train(train_loaders, test_loaders, model, device, config, args, rank):
 
                 try:
                     #test_auc = roc_auc_score(labels[wgt_mask].to("cpu") == 1, scores[wgt_mask].to("cpu"), multi_class='ovr', sample_weight=weights[wgt_mask].to("cpu"))
+                    if (len(scores[0]) != config["Model"]["args"]["out_size"]):
+                        print("ERROR: The out_size and the number of class labels don't match! Please check config.")
                     test_auc = roc_auc_score(labels_onehot[wgt_mask], scores[wgt_mask].to("cpu"), multi_class='ovr', sample_weight=weights[wgt_mask].to("cpu"))
                 except ValueError:
                     test_auc = np.nan
