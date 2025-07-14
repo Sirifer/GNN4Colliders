@@ -77,9 +77,12 @@ def main():
     configs = [
         # "configs/stats_100K/pretraining_multiclass.yaml",
         # "configs/stats_100K/ttH_CP_even_vs_odd.yaml",
-        "configs/stats_all/pretraining_multiclass.yaml",
-        "configs/stats_all/ttH_CP_even_vs_odd.yaml",
+        # "configs/stats_all/pretraining_multiclass.yaml",
+        # "configs/stats_all/ttH_CP_even_vs_odd.yaml",
         # "configs/attention/ttH_CP_even_vs_odd.yaml",
+        "configs/stats_all/ttH_CP_even_vs_odd_batch_size_2048.yaml",
+        "configs/stats_all/ttH_CP_even_vs_odd_batch_size_4096.yaml",
+        "configs/stats_all/ttH_CP_even_vs_odd_batch_size_8192.yaml",
     ]
 
     # Path to the bash script to be called

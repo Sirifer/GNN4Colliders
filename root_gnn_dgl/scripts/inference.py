@@ -135,7 +135,6 @@ def main():
 
     import time
     start  = time.time()
-    import ROOT
     import torch
     from array import array
     import numpy as np
@@ -247,55 +246,41 @@ def main():
             all_labels[branch] = labels
             all_tracking[branch] = tracking_info
 
+
     if args.write:
-        from ROOT import std
-        # Open the original ROOT file
-        infile = ROOT.TFile.Open(args.target)
-        tree = infile.Get(dset_config['args']['tree_name'])
+        import uproot
+        import awkward as ak
 
-        # Create the destination directory if it doesn't exist
-        os.makedirs(os.path.split(args.destination)[0], exist_ok=True)
+        # Open the original ROOT file and get the tree
+        infile = uproot.open(args.target)
+        tree = infile[dset_config['args']['tree_name']]
 
-        # Create a new ROOT file to write the modified tree
-        outfile = ROOT.TFile.Open(args.destination, 'RECREATE')
+        # Read the original tree as an awkward array
+        original_data = tree.arrays(library="ak")
 
-        # Clone the original tree structure
-        outtree = tree.CloneTree(0)
-
-        # Create branches for all scores
-        branch_vectors = {}
+        # Prepare new branches as dicts of arrays
+        new_branches = {}
+        n_entries = len(original_data)
         for branch, scores in all_scores.items():
-            if isinstance(scores[0], (list, tuple, np.ndarray)) and len(scores[0]) > 1:
-                # Create a new branch for vectors
-                branch_vectors[branch] = std.vector('float')()
-                outtree.Branch(branch, branch_vectors[branch])
-            else:
-                # Create a new branch for single floats
-                branch_vectors[branch] = array('f', [0])
-                outtree.Branch(branch, branch_vectors[branch], f'{branch}/F')
+            # Ensure the scores array is the right length
+            scores = np.asarray(scores)
+            if scores.shape[0] != n_entries:
+                raise ValueError(f"Branch '{branch}' has {scores.shape[0]} entries, but tree has {n_entries}")
+            new_branches[branch] = scores
 
-        # Fill the tree
-        for i in range(tree.GetEntries()):
-            tree.GetEntry(i)
+        # Merge all arrays (original + new branches)
+        # Convert awkward to dict of numpy arrays for uproot
+        out_dict = {k: np.asarray(v) for k, v in ak.to_numpy(original_data).items()}
+        out_dict.update(new_branches)
 
-            for branch, scores in all_scores.items():
-                branch_data = branch_vectors[branch]
-                if isinstance(branch_data, array):  # Check if it's a single float array
-                    branch_data[0] = float(scores[i])
-                else:  # Assume it's a std::vector<float>
-                    branch_data.clear()
-                    for value in scores[i]:
-                        branch_data.push_back(float(value))
+        # Write to new ROOT file
+        os.makedirs(os.path.split(args.destination)[0], exist_ok=True)
+        with uproot.recreate(args.destination) as outfile:
+            outfile.mktree(dset_config['args']['tree_name'], {k: v.dtype for k, v in out_dict.items()})
+            outfile[dset_config['args']['tree_name']].extend(out_dict)
 
-            outtree.Fill()
+        print(f"Wrote new ROOT file {args.destination} with new branches {list(new_branches.keys())}")
 
-        # Write the modified tree to the new file
-        print(f'Writing to file {args.destination}')
-        print(f'Input entries: {tree.GetEntries()}, Output entries: {outtree.GetEntries()}')
-        print(f'Wrote scores to {args.branch_name}')
-        outtree.Write()
-        outfile.Close()
-        infile.Close()
     else:
         os.makedirs(os.path.split(args.destination)[0], exist_ok=True)
         np.savez(args.destination, scores=all_scores, labels=all_labels, tracking_info=all_tracking)

@@ -1,6 +1,7 @@
 from dgl.data import DGLDataset
 import dgl
-import ROOT
+import uproot
+import awkward as ak
 import torch
 import os
 import glob
@@ -14,7 +15,7 @@ def node_features_from_tree(ch, node_branch_names, node_branch_types, node_featu
         if node_type == 'single':
             lengths.append(1)
         elif node_type == 'vector':
-            lengths.append(len(getattr(ch, branch)))
+            lengths.append(len(ch[branch]))
         else:
             print('Unknown node branch type: {}'.format(node_type))
     features = []
@@ -38,16 +39,14 @@ def node_features_from_tree(ch, node_branch_names, node_branch_types, node_featu
                 this_type_ends_at = sum(lengths[:itype+1])
                 feat.extend(features[0][this_type_starts_at:this_type_ends_at]*torch.cosh(features[1][this_type_starts_at:this_type_ends_at]))
             elif node_type == 'single':
-                feat.append(getattr(ch, branch))
+                feat.append(ch[branch])
             elif node_type == 'vector':
-                feat.extend(getattr(ch, branch))
+                feat.extend(ch[branch])
             itype += 1
         features.append(torch.tensor(feat))
     return torch.stack(features, dim=1) * node_feature_scales, lengths
 
 def full_connected_graph(n_nodes, self_loops=True):
-    senders = []
-    receivers = []
     senders = np.arange(n_nodes*n_nodes) // n_nodes
     receivers = np.arange(n_nodes*n_nodes) % n_nodes
     if not self_loops and n_nodes > 1:
@@ -59,19 +58,18 @@ def full_connected_graph(n_nodes, self_loops=True):
 def check_selection(ch, selection):
     var, cut, op = selection
     if op == '>':
-        return getattr(ch, var) > cut
+        return ch[var] > cut
     elif op == '<':
-        return getattr(ch, var) < cut
+        return ch[var] < cut
     elif op == '==':
-        return getattr(ch, var) == cut
-    
+        return ch[var] == cut
+
 def check_selections(ch, selections):
     for selection in selections:
         if not check_selection(ch, selection):
             return False
     return True
 
-#Base dataset class for making graphs from ROOT ntuples.
 class RootDataset(DGLDataset):
     def __init__(self, name=None, raw_dir=None, save_dir=None, label=1, file_names = '*.root', node_branch_names=None, node_branch_types=None, node_feature_scales=None, 
                  selections=[], save=True, tree_name = 'nominal_Loose', fold_var = 'eventNumber', weight_var = None, chunks = 1, process_chunks = None, global_features = [], tracking_info = [], **kwargs):
@@ -88,7 +86,7 @@ class RootDataset(DGLDataset):
         self.fold_var = fold_var
         self.tracking_info = tracking_info
         self.tracking_info.insert(0, fold_var)
-        if weight_var == None:
+        if weight_var is None:
             weight_var = 1
         self.tracking_info.insert(1, weight_var)
         self.global_features = global_features
@@ -116,7 +114,7 @@ class RootDataset(DGLDataset):
                 branches.append(feat)
         for selection in self.selections:
             branches.append(selection[0])
-        return branches
+        return list(set(branches))  # Remove duplicates
 
     def make_graph(self, ch):
         t1 = time.time()
@@ -129,7 +127,7 @@ class RootDataset(DGLDataset):
         self.times[0] += t2 - t1
         self.times[1] += t3 - t2
         return g
-    
+
     def process(self):
         times = [0, 0, 0]
         oldtime = time.time()
@@ -139,21 +137,21 @@ class RootDataset(DGLDataset):
             self.files = []
             for file_name in self.file_names:
                 self.files.extend(glob.glob(os.path.join(self.raw_dir, file_name)))
-        self.chain = ROOT.TChain(self.tree_name)
-
-        if len(self.files) == 0:
-            print('No files found in {}'.format(os.path.join(self.raw_dir, self.file_names)))
-        for file in self.files:
-            utils.set_timeout(60*2)
-            self.chain.Add(file)
-            utils.unset_timeout()
         branches = self.get_list_of_branches()
-        self.chain.SetBranchStatus('*', 0)
-        for branch in branches:
-            self.chain.SetBranchStatus(branch, 1)
+
+        # Read all files and concatenate arrays
+        arrays = []
+        for file in self.files:
+            with uproot.open(file) as f:
+                arrays.append(f[self.tree_name].arrays(branches, library="ak"))
+        if len(arrays) == 0:
+            print('No files found in {}'.format(os.path.join(self.raw_dir, self.file_names)))
+            return
+        data = ak.concatenate(arrays, axis=0)
+        n_entries = len(data[branches[0]])
         newtime = time.time()
         times[0] += newtime - oldtime
-        chunks = np.array_split(np.arange(self.chain.GetEntries()), self.chunks)
+        chunks = np.array_split(np.arange(n_entries), self.chunks)
         chunks = [chunk for i, chunk in enumerate(chunks) if i in self.process_chunks]
 
         self.graph_chunks = []
@@ -169,28 +167,28 @@ class RootDataset(DGLDataset):
             globals = []
             for ientry in chunk:
                 if (ientry % 10000 == 0):
-                    print('Processing event {}/{}'.format(ientry, self.chain.GetEntries()), flush=True)
-                self.chain.GetEntry(ientry)
+                    print('Processing event {}/{}'.format(ientry, n_entries), flush=True)
+                ch = {b: data[b][ientry] for b in branches}
                 passed = True
                 for selection in self.selections:
-                    if not check_selection(self.chain, selection):
+                    if not check_selection(ch, selection):
                         passed = False
                         continue
                 oldtime = newtime
                 newtime = time.time()
                 times[1] += newtime - oldtime
                 if passed:
-                    graphs.append(self.make_graph(self.chain))
-                    labels.append( self.label )
+                    graphs.append(self.make_graph(ch))
+                    labels.append(self.label)
                     tracking.append(torch.zeros(len(self.tracking_info), dtype=torch.double))
                     globals.append(torch.zeros(len(self.global_features)))
                     for i_ti, tr_branch in enumerate(self.tracking_info):
                         if isinstance(tr_branch, str):
-                            tracking[-1][i_ti] = getattr(self.chain, tr_branch)
+                            tracking[-1][i_ti] = ch[tr_branch]
                         else:
                             tracking[-1][i_ti] = tr_branch
                     for i_gl, gl_branch in enumerate(self.global_features):
-                        globals[-1][i_gl] = getattr(self.chain, gl_branch)
+                        globals[-1][i_gl] = ch[gl_branch]
                 oldtime = newtime
                 newtime = time.time()
                 times[2] += newtime - oldtime
@@ -198,7 +196,6 @@ class RootDataset(DGLDataset):
             labels = torch.tensor(labels)
             tracking = torch.stack(tracking)
             globals = torch.stack(globals)
-            
             if (self.chunks > 1):
                 self.save_chunk(chunk_id, graphs, labels, tracking, globals)
             else:
@@ -208,29 +205,15 @@ class RootDataset(DGLDataset):
                 self.graphs = graphs
                 self.save()
         return
-        self.graphs = self.graph_chunks[0]
-        for chunk in self.graph_chunks[1:]:
-            self.graphs += chunk
-        self.labels = torch.cat(self.label_chunks)
-        self.tracking = torch.cat(self.tracking_chunks)
-        self.global_features = torch.cat(self.global_chunks)
-        print('Time spent: Creating TChain: {}s, Getting Entries and Selection: {}s, Graph Creation: {}s'.format(*times))
-        print('Time spent in node_features_from_tree: {}s, full_connected_graph: {}s'.format(*self.times))
-    
+
     def save(self):
-        """save the graph list and the labels"""
         if not self.save_to_disk:
             return
         graph_path = os.path.join(self.save_dir, self.name + '.bin')
         if self.chunks == 1:
-            # print(len(self.graphs))
-            # print(len(self.labels))
-            # print(len(self.tracking))
-            # print(len(self.globals))
             print(f'Saving dataset to {os.path.join(self.save_dir, self.name + ".bin")}')
             dgl.save_graphs(str(graph_path), self.graphs, {'labels': torch.tensor(self.labels), 'tracking': torch.tensor(self.tracking), 'global': torch.tensor(self.global_features)})
         else:
-            print(len(self.graph_chunks))
             for i in range(len(self.process_chunks)):
                 print(f'Saving dataset to {os.path.join(self.save_dir, self.name + f"_{self.process_chunks[i]}.bin")}')
                 dgl.save_graphs(str(graph_path).replace('.bin', f'_{self.process_chunks[i]}.bin'), self.graph_chunks[i], {'labels': self.label_chunks[i], 'tracking': self.tracking_chunks[i], 'global': self.global_chunks[i]})
@@ -241,7 +224,7 @@ class RootDataset(DGLDataset):
         graph_path = os.path.join(self.save_dir, self.name + '.bin')
         print(f'Saving dataset to {os.path.join(self.save_dir, self.name + f"_{self.process_chunks[chunk_id]}.bin")}')
         dgl.save_graphs(str(graph_path).replace('.bin', f'_{self.process_chunks[chunk_id]}.bin'), graphs, {'labels': labels, 'tracking': tracking, 'global': globals})
-            
+
     def has_cache(self):
         print(f'Checking for cache of {self.name}')
         if not self.save_to_disk:
@@ -290,7 +273,7 @@ class RootDataset(DGLDataset):
     
     def __len__(self):
         return len(self.graphs)
-    
+
 #Dataset with edge features added (deta, dphi, dR)
 class EdgeDataset(RootDataset):
     def make_graph(self, ch):
