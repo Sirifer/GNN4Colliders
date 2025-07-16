@@ -264,13 +264,9 @@ def train(train_loaders, test_loaders, model, device, config, args, rank):
         start = time.time()
         run = start
         if (args.profile):
-            if (epoch == 2):
+            if (epoch == 0):
                 torch.cuda.cudart().cudaProfilerStart()
-            if (epoch == 3):
-                print("Done profiling")
-                torch.cuda.cudart().cudaProfilerStop()
             torch.cuda.nvtx.range_push("Epoch Start")
-            print("executed push")
 
         if (args.multigpu or args.multinode):
             dist.barrier()
@@ -606,7 +602,6 @@ def train(train_loaders, test_loaders, model, device, config, args, rank):
 
         if (args.profile):
             torch.cuda.nvtx.range_pop() # pop epoch
-            print("executed pop")
 
     print(f"Load: {cumulative_times[0]:.4f} s")
     print(f"Batch: {cumulative_times[1]:.4f} s")
