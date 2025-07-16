@@ -3,7 +3,10 @@ date
 DIRECTORY="/global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/configs/model_configs/"
 
 configs=(  
-  "run_3_ttH/v05/sb_yukawa_cp_abs_weights.yaml --abs"
+  "configs/stats_all/ttH_CP_even_vs_odd.yaml"
+  "configs/stats_all/ttH_CP_even_vs_odd_batch_size_2048.yaml"
+  "configs/stats_all/ttH_CP_even_vs_odd_batch_size_4096.yaml"
+  "configs/stats_all/ttH_CP_even_vs_odd_batch_size_8192.yaml"
 )
 
 counter=0
