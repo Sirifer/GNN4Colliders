@@ -1,12 +1,12 @@
 Training_Name: ttH_CP_even_vs_odd
 Training_Directory: trainings/physicsnemo/test
 Model:
-  module: physicsnemo.models
-  class: meshgraphnet
+  module: models.meshgraphnet
+  class: MeshGraphNet
   args:
     input_dim_nodes: 7
     input_dim_edges: 3
-    output_dim: 1
+    output_dim: 64
 Training:
   epochs: 500
   batch_size: 1024

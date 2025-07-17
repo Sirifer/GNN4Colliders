@@ -50,8 +50,12 @@ def gpu_mem():
 def train(train_loaders, test_loaders, model, device, config, args):
     restart = args.restart
 
-    loss_fcn = utils.buildFromConfig(config['Loss'], {'reduction':'none'})
-    finish_fn = utils.buildFromConfig(config['Loss']['finish'])
+    if ('Loss' in config):
+        loss_fcn = utils.buildFromConfig(config['Loss'], {'reduction':'none'})
+        finish_fn = utils.buildFromConfig(config['Loss']['finish'])
+    else:
+        loss_fcn = torch.nn.BCEWithLogitsLoss(reduction='none')
+        finish_fn = torch.nn.Sigmoid()
     optimizer = torch.optim.Adam(model.parameters(), lr=config['Training']['learning_rate'])
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma = config['Training']['gamma']) 
 
@@ -63,15 +67,18 @@ def train(train_loaders, test_loaders, model, device, config, args):
 
     starting_epoch = 0
     if not restart:
-        last_ep, checkpoint = utils.get_last_epoch(config)   
-        model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        starting_epoch = checkpoint['epoch'] + 1
-        early_termination = utils.EarlyStop.load_from_dict(checkpoint['early_stop'])
-        if early_termination.should_stop:
-            print(f"Early Termination at Epoch {last_ep}")
-            return
-        print(f"Loaded epoch {checkpoint['epoch']} from checkpoint")
+        last_ep, checkpoint = utils.get_last_epoch(config)  
+        if (last_ep >= 0): 
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            starting_epoch = checkpoint['epoch'] + 1
+            early_termination = utils.EarlyStop.load_from_dict(checkpoint['early_stop'])
+            if early_termination.should_stop:
+                print(f"Early Termination at Epoch {last_ep}")
+                return
+            print(f"Loaded epoch {checkpoint['epoch']} from checkpoint")
+        else:
+            print("Starting from scratch")
         log = open(config['Training_Directory'] + '/training.log', 'a', buffering=1)
     else:
         # Remove all *.pt and *.npz files in the Training_Directory
@@ -129,11 +136,11 @@ def train(train_loaders, test_loaders, model, device, config, args):
                 if (args.profile):
                     torch.cuda.nvtx.range_push("Model Forward")
                 if (len(logits) == 0):
-                    logits = model(graph, global_feats)
+                    logits = model(graph.ndata['features'], graph.edata['features'], graph)
                     tlabels = label
                     weights = track[:,1]
                 else:
-                    logits = torch.concatenate((logits, model(graph, global_feats)), dim=0)
+                    logits = torch.concatenate((logits, model(graph.ndata['features'], graph.edata['features'], graph)), dim=0)
                     tlabels = torch.concatenate((tlabels, label), dim=0)
                     weights = torch.concatenate((weights, track[:,1]), dim=0)
                 batch_lengths.append(logits.shape[0] - 1)
@@ -208,7 +215,8 @@ def train(train_loaders, test_loaders, model, device, config, args):
                     if is_padded:
                         global_feats = torch.cat([global_feats, torch.zeros(1, len(global_feats[0]))])
 
-                    batch_scores = model(batch.to(device), global_feats.to(device))
+                    # batch_scores = model(batch.to(device), global_feats.to(device))
+                    batch_scores = model(graph.ndata['features'].to(device), graph.edata['features'].to(device), graph)
                     
                     if is_padded:
                         scores.append(batch_scores[:-1,:])
@@ -416,15 +424,17 @@ def main(args=None):
     load_end = time.time()
     print("Load time: {:.4f} s".format(load_end - load_start))
 
-    model = utils.buildFromConfig(config["Model"], {'sample_graph': gsamp, 'sample_global': global_samp, 'seed': args.seed}).to(device)
+    # model = utils.buildFromConfig(config["Model"], {'sample_graph': gsamp, 'sample_global': global_samp, 'seed': args.seed}).to(device)
+    
+    model = utils.buildFromConfig(config["Model"]).to(device)
     
     # @dataclass
     # class MetaData(ModelMetaData):
     #     name: str = "Edge_Network"
 
-    physicsnemo_model = Module.from_torch(model)
-    print(f"physicsnemo_model = {physicsnemo_model}")
-    model = physicsnemo_model()
+    # physicsnemo_model = Module.from_torch(model)
+    # print(f"physicsnemo_model = {physicsnemo_model}")
+    # model = physicsnemo_model()
     
 
     pytorch_total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
