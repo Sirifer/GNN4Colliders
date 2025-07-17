@@ -11,8 +11,11 @@ def buildFromConfig(conf, run_time_args = {}):
     device = run_time_args.get('device', 'cpu')
     if 'module' in conf:
         module = importlib.import_module(conf['module'])
+        print(module)
         cls = getattr(module, conf['class'])
+        print(cls)
         args = conf['args'].copy()
+        print(args)
         if 'weight' in args and isinstance(args['weight'], list):
             args['weight'] = torch.tensor(args['weight'], dtype=torch.float, device=device)
         # Remove device from run_time_args to not pass it to the class

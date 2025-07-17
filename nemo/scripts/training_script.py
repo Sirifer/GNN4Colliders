@@ -416,7 +416,7 @@ def main(args=None):
     load_end = time.time()
     print("Load time: {:.4f} s".format(load_end - load_start))
 
-    model = utils.buildFromConfig(config["Model"], {'sample_graph': gsamp, 'sample_global': global_samp, 'seed': seed}).to(device)
+    model = utils.buildFromConfig(config["Model"], {'sample_graph': gsamp, 'sample_global': global_samp, 'seed': args.seed}).to(device)
     
     # @dataclass
     # class MetaData(ModelMetaData):
