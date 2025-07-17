@@ -54,9 +54,11 @@ datasets:
   - name: ttH_cp_even
     load_path: ${paths.data_dir}/ttH_NLO.root
     save_path: ${paths.save_dir}/ttH_NLO_processed.pt
+    label: 0
   - name: ttH_cp_odd
     load_path: ${paths.data_dir}/ttH_CPodd.root
     save_path: ${paths.save_dir}/ttH_CPodd.pt
+    label: 1
 
 root_graph:
   ttree: output
@@ -64,4 +66,5 @@ root_graph:
   particles: ["jet", "ele", "mu", "ph", "MET"]
   features: ["pt", "eta", "phi", "energy", "btag", "charge", "node_type"]
   globals: []
-  batch_size: 16384
+  weights: ""
+  batch_size: 4096

@@ -6,7 +6,10 @@ import numpy as np
 import awkward as ak
 from omegaconf import DictConfig
 from typing import List
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
+os.environ["TMPDIR"] = "/pscratch/sd/j/joshuaho/tmp"
 
 def make_graph(node_features: np.array, dtype=torch.float32):
     node_features = torch.tensor(node_features, dtype=dtype)
@@ -38,6 +41,64 @@ def make_graph(node_features: np.array, dtype=torch.float32):
     g.globals = torch.tensor([num_nodes], dtype=dtype)
 
     return g
+
+def process_chunk(args):
+    name, batch_id, arrays, particles, features, branches, dtype, save_path = args
+    n_entries = len(arrays)
+    arrays_ordered = {}
+
+    arrays_ordered = {}
+    for b in branches:
+        if b in arrays.fields:
+            arrays_ordered[b] = arrays[b]
+        elif b.endswith("_energy"):
+            prefix = b[:-7]
+            pt_name = f"{prefix}_pt"
+            if prefix == "MET":
+                pt_name = f"{prefix}_met"
+            eta_name = f"{prefix}_eta"
+            arrays_ordered[b] = arrays[pt_name] * np.cosh(arrays[eta_name])
+        elif "node_type" in b:
+            prefix = b[:-10]
+            pt_name = f"{prefix}_pt"
+            if prefix == "MET":
+                pt_name = f"{prefix}_met"
+            index = particles.index(prefix)
+            arrays_ordered[b] = ak.ones_like(arrays[pt_name]) * index
+        else:
+            prefix = b.split("_")[0]
+            pt_name = f"{prefix}_pt"
+            if prefix == "MET":
+                pt_name = f"{prefix}_met"
+            arrays_ordered[b] = ak.zeros_like(arrays[pt_name])
+
+    graphs = []
+    for i in range(n_entries):
+        if (i % 250 == 0):
+            print(f"{name} batch {batch_id} processed {i} events")
+        node_features_list = []
+        for p in particles:
+            feats = []
+            for f in features:
+                branch = f"{p}_{f}"
+                if p == "MET" and f == "pt":
+                    branch = "MET_met"
+                value = ak.to_numpy(arrays_ordered[branch][i])
+                feats.append(value)
+            if len(feats[0]) == 0:
+                continue
+            node_array = np.stack(feats, axis=1)
+            node_features_list.append(node_array)
+        if node_features_list:
+            node_features = np.concatenate(node_features_list, axis=0)
+        else:
+            node_features = np.empty((0, len(features)))
+        graphs.append(make_graph(node_features, dtype=dtype))
+    batched_graph = dgl.batch(graphs)
+    dgl.save_graphs(f"{save_path}/{name}_batch_{batch_id:03d}.bin", [batched_graph])
+    print(f"Saved {name} batch {batch_id:03d} to {save_path}/{name}_batch_{batch_id:03d}.bin")
+    return
+    
 
 class Root_Graph:
     def __init__(
@@ -71,77 +132,36 @@ class Root_Graph:
         branches = ["MET_met" if b == "MET_pt" else b for b in branches]
         return branches
 
-    def process(self, max_workers: int = 16):
+    def process(self, max_workers: int = 128):
         branches = self.get_branches()
-        # Get available branches from the tree
         with uproot.open(f"{self.load_path}:{self.ttree}") as tree:
             available_branches = set(tree.keys())
 
         print(f"Getting branches: {branches}")
         graphs = []
 
-        for arrays in uproot.iterate(
-            f"{self.load_path}:{self.ttree}",
-            expressions=[b for b in branches if b in available_branches],
-            step_size=self.batch_size,
-            library="ak"
+        # Prepare chunk arguments for each chunk
+        chunk_args_list = []
+        for batch_id, arrays in enumerate(
+            uproot.iterate(
+                f"{self.load_path}:{self.ttree}",
+                expressions=[b for b in branches if b in available_branches],
+                step_size=self.batch_size,
+                library="ak"
+            )
         ):
-            n_entries = len(arrays)
-            # Convert all arrays to numpy at once, avoid repeated conversion
-            arrays_ordered = {}
-            for b in branches:
-                if b in arrays.fields:
-                    arrays_ordered[b] = arrays[b]
-                elif b.endswith("_energy"):
-                    prefix = b[:-7]
-                    pt_name = f"{prefix}_pt"
-                    if prefix == "MET":
-                        pt_name = f"{prefix}_met"
-                    eta_name = f"{prefix}_eta"
-                    arrays_ordered[b] = arrays[pt_name] * np.cosh(arrays[eta_name])
-                elif "node_type" in b:
-                    prefix = b[:-10]
-                    pt_name = f"{prefix}_pt"
-                    if prefix == "MET":
-                        pt_name = f"{prefix}_met"
-                    index = self.particles.index(prefix)
-                    arrays_ordered[b] = ak.ones_like(arrays[pt_name]) * index
-                else:
-                    prefix = b.split("_")[0]
-                    pt_name = f"{prefix}_pt"
-                    if prefix == "MET":
-                        pt_name = f"{prefix}_met"
-                    arrays_ordered[b] = ak.zeros_like(arrays[pt_name])
+            # Pass everything needed for chunk processing
+            chunk_args_list.append((self.name, batch_id, arrays, self.particles, self.features, branches, self.dtype, self.save_path))
 
-            def build_graph(i):
-                node_features_list = []
-                for p in self.particles:
-                    feats = []
-                    for f in self.features:
-                        branch = f"{p}_{f}"
-                        if p == "MET" and f == "pt":
-                            branch = "MET_met"
-                        value = ak.to_numpy(arrays_ordered[branch][i])
-                        feats.append(value)
-                    if len(feats[0]) == 0:
-                        continue
-                    node_array = np.stack(feats, axis=1)
-                    node_features_list.append(node_array)
-                if node_features_list:
-                    node_features = np.concatenate(node_features_list, axis=0)
-                else:
-                    node_features = np.empty((0, len(self.features)))
-                return make_graph(node_features, dtype=self.dtype)
+        # Parallel processing of chunks
 
-            # Parallel graph construction within the chunk
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                chunk_graphs = list(executor.map(build_graph, range(n_entries)))
-            graphs.extend(chunk_graphs)
-            print(f"Processed chunk with {n_entries} entries")
-
-        batched_graph = dgl.batch(graphs)
-        print(f"Batched graph: {batched_graph}")
-        return batched_graph
+        with ThreadPoolExecutor(max_workers) as executor:
+            futures = [executor.submit(process_chunk, args) for args in chunk_args_list]
+            for future in as_completed(futures):
+                chunk_graphs = future.result()
+                graphs.extend(chunk_graphs)
+                print(f"Processed chunk with {len(chunk_graphs)} entries")
+        return
 
     def load(self):
         # Check if processed file exists, if not, process and save it
