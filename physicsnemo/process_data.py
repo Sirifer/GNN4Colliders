@@ -6,7 +6,14 @@ import numpy as np
 import awkward as ak
 from omegaconf import DictConfig
 from typing import List
+from typing import Union
+import math
+import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from torch.utils.data import Dataset
+
+from dgl.dataloading import GraphDataLoader
 
 
 os.environ["TMPDIR"] = "/pscratch/sd/j/joshuaho/tmp"
@@ -43,7 +50,7 @@ def make_graph(node_features: np.array, dtype=torch.float32):
     return g
 
 def process_chunk(args):
-    name, batch_id, arrays, particles, features, branches, dtype, save_path = args
+    name, label, chunk_id, arrays, particles, features, branches, dtype, save_path = args
     n_entries = len(arrays)
     arrays_ordered = {}
 
@@ -75,7 +82,7 @@ def process_chunk(args):
     graphs = []
     for i in range(n_entries):
         if (i % 250 == 0):
-            print(f"{name} batch {batch_id} processed {i} events")
+            print(f"{name} chunk {chunk_id} processed {i} events")
         node_features_list = []
         for p in particles:
             feats = []
@@ -94,21 +101,23 @@ def process_chunk(args):
         else:
             node_features = np.empty((0, len(features)))
         graphs.append(make_graph(node_features, dtype=dtype))
-    batched_graph = dgl.batch(graphs)
-    dgl.save_graphs(f"{save_path}/{name}_batch_{batch_id:03d}.bin", [batched_graph])
-    print(f"Saved {name} batch {batch_id:03d} to {save_path}/{name}_batch_{batch_id:03d}.bin")
+
+    labels = torch.full((len(graphs),), label, dtype=torch.long)
+    dgl.save_graphs(f"{save_path}/{name}_{chunk_id:02d}.bin", graphs, {'label': labels})
+    print(f"Saved {name} chunk {chunk_id:02d} to {save_path}/{name}_{chunk_id:03d}.bin")
     return
-    
 
 class Root_Graph:
     def __init__(
         self,
         name: str,
+        label: int,
         load_path: str,
         save_path: str,
         cfg: DictConfig
     ):
         self.name = name
+        self.label = label
         self.load_path = load_path
         self.save_path = save_path
         self.data = None
@@ -117,7 +126,10 @@ class Root_Graph:
         self.particles = cfg.particles
         self.features = cfg.features
         self.globals = cfg.globals
-        self.batch_size = cfg.batch_size
+        self.chunks = cfg.chunks
+
+        self.train_val_test_split = cfg.train_val_test_split
+        assert np.sum(self.train_val_test_split) == 1, "train_val_test_split must sum to 1"
 
         dtype_str = getattr(cfg, "type", "torch.float32")
         if isinstance(dtype_str, str) and dtype_str.startswith("torch."):
@@ -132,54 +144,148 @@ class Root_Graph:
         branches = ["MET_met" if b == "MET_pt" else b for b in branches]
         return branches
 
-    def process(self, max_workers: int = 128):
+    def process(self, max_workers: int = 32):
         branches = self.get_branches()
         with uproot.open(f"{self.load_path}:{self.ttree}") as tree:
             available_branches = set(tree.keys())
+            num_entries = tree.num_entries
 
         print(f"Getting branches: {branches}")
         graphs = []
 
+        step_size = math.ceil(num_entries / self.chunks)
+
         # Prepare chunk arguments for each chunk
         chunk_args_list = []
-        for batch_id, arrays in enumerate(
+        for chunk_id, arrays in enumerate(
             uproot.iterate(
                 f"{self.load_path}:{self.ttree}",
                 expressions=[b for b in branches if b in available_branches],
-                step_size=self.batch_size,
+                step_size=step_size,
                 library="ak"
             )
         ):
             # Pass everything needed for chunk processing
-            chunk_args_list.append((self.name, batch_id, arrays, self.particles, self.features, branches, self.dtype, self.save_path))
+            chunk_args_list.append((self.name, self.label, chunk_id, arrays, self.particles, self.features, branches, self.dtype, self.save_path))
 
         # Parallel processing of chunks
 
         with ThreadPoolExecutor(max_workers) as executor:
             futures = [executor.submit(process_chunk, args) for args in chunk_args_list]
             for future in as_completed(futures):
-                chunk_graphs = future.result()
-                graphs.extend(chunk_graphs)
-                print(f"Processed chunk with {len(chunk_graphs)} entries")
+                future.result()
+                
         return
+    
+    def train_val_test(self):
+        split = self.train_val_test_split
+        # Collect all graphs and labels first
+        all_graphs = []
+        all_labels = []
+        files = [f"{self.save_path}/{self.name}_{chunk_id:02d}.bin" for chunk_id in range(self.chunks)]
+        for f in files:
+            graphs, label_dict = dgl.load_graphs(f)
+            all_graphs.extend(graphs)
+            # Assuming label_dict['label'] is shape (num_graphs_in_file,)
+            all_labels.extend(label_dict['label'].tolist())
+
+        n = len(all_graphs)
+        rand = np.random.rand(n)
+        train_idx = rand < split[0]
+        val_idx = (rand >= split[0]) & (rand < split[0] + split[1])
+        test_idx = rand >= split[0] + split[1]
+
+        train_graphs = [g for g, flag in zip(all_graphs, train_idx) if flag]
+        val_graphs = [g for g, flag in zip(all_graphs, val_idx) if flag]
+        test_graphs = [g for g, flag in zip(all_graphs, test_idx) if flag]
+
+        train_labels = [l for l, flag in zip(all_labels, train_idx) if flag]
+        val_labels = [l for l, flag in zip(all_labels, val_idx) if flag]
+        test_labels = [l for l, flag in zip(all_labels, test_idx) if flag]
+
+        train_labels = torch.tensor(train_labels)
+        val_labels = torch.tensor(val_labels)
+        test_labels = torch.tensor(test_labels)
+
+        dgl.save_graphs(f"{self.save_path}/{self.name}_train.bin", train_graphs, {'label': train_labels})
+        dgl.save_graphs(f"{self.save_path}/{self.name}_val.bin", val_graphs, {'label': val_labels})
+        dgl.save_graphs(f"{self.save_path}/{self.name}_test.bin", test_graphs, {'label': test_labels})
+
+        print(f"Train: {len(train_graphs)}, Val: {len(val_graphs)}, Test: {len(test_graphs)}")
 
     def load(self):
-        # Check if processed file exists, if not, process and save it
-        if not os.path.exists(self.save_path):
-            print(f"{self.save_path} not found, processing data...")
-            batched_graphs = self.process()
-            # TODO: Save processed graph to self.save_path
-            # Example: torch.save(batched_graph, self.save_path)
-        # TODO: Load the processed graph from self.save_path
-        print(f"Loaded {self.name} from {self.save_path}")
+        # List of expected files
+        files = [f"{self.save_path}/{self.name}_{chunk_id:02d}.bin" for chunk_id in range(self.chunks)]
+        
+        # Check if all files exist
+        if not all(os.path.exists(f) for f in files):
+            print("graphs not found, processing data...")
+            self.process()
+        else:
+            print("graphs found, skipping processing...")
+        
+        # Check if train/val/test exist:
+        files = [f"{self.save_path}/{self.name}_{split}.bin" for split in ["train", "val", "test"]]
+        if not all(os.path.exists(f) for f in files):
+            print("train/val/test split not found, splitting graphs...")
+            self.train_val_test()
+        else:
+            print("train/val/test split found, skipping splitting...")
+
+        print("loading graphs...")
+        train_graphs, train_label_dict = dgl.load_graphs(f"{self.save_path}/{self.name}_train.bin")
+        val_graphs, val_label_dict = dgl.load_graphs(f"{self.save_path}/{self.name}_val.bin")
+        test_graphs, test_label_dict = dgl.load_graphs(f"{self.save_path}/{self.name}_test.bin")
+
+        train_labels = train_label_dict['label']
+        val_labels = val_label_dict['label']
+        test_labels = test_label_dict['label']
+
+        return train_graphs, train_labels, val_graphs, val_labels, test_graphs, test_labels
+
+class GraphDataset(Dataset):
+    def __init__(self, graphs, labels):
+        self.graphs = graphs
+        self.labels = labels
+    def __len__(self):
+        return len(self.graphs)
+    def __getitem__(self, idx):
+        return self.graphs[idx], self.labels[idx]
 
 def process_data(cfg: DictConfig):
-    graphs = []
+
+    random.seed(cfg.random_seed)
+    np.random.seed(cfg.random_seed)
+    torch.manual_seed(cfg.random_seed)
+
+    all_train_graphs = []
+    all_train_labels = []
+    all_val_graphs = []
+    all_val_labels = []
+    all_test_graphs = []
+    all_test_labels = []
+
     for ds in cfg.datasets:
         name = ds['name']
         load_path = ds.get('load_path', f"{cfg.paths.data_dir}/{name}.root")
-        save_path = ds.get('save_path', f"{cfg.paths.save_dir}/{name}_processed.pt")
-        graph = Root_Graph(name, load_path, save_path, cfg.root_graph)
-        graph.load()
-        graphs.append(graph)
-    return graphs
+        save_path = ds.get('save_path', f"{cfg.paths.save_dir}/")
+        graph = Root_Graph(name, ds.get('label'), load_path, save_path, cfg.root_graph)
+        train_graphs, train_labels, val_graphs, val_labels, test_graphs, test_labels = graph.load()
+        all_train_graphs.extend(train_graphs)
+        all_train_labels.extend(train_labels)
+        all_val_graphs.extend(val_graphs)
+        all_val_labels.extend(val_labels)
+        all_test_graphs.extend(test_graphs)
+        all_test_labels.extend(test_labels)
+
+    train_dataset = GraphDataset(all_train_graphs, all_train_labels)
+    val_dataset = GraphDataset(all_val_graphs, all_val_labels)
+    test_dataset = GraphDataset(all_test_graphs, all_test_labels)
+
+    batch_size = cfg.root_graph.batch_size
+
+    train_loader = GraphDataLoader(train_dataset, {'batch_size' : batch_size, 'shuffle' : True})
+    val_loader = GraphDataLoader(val_dataset, {'batch_size' : batch_size, 'shuffle' : False})
+    test_loader = GraphDataLoader(test_dataset, {'batch_size' : batch_size, 'shuffle' : False})
+
+    return train_loader, val_loader, test_loader

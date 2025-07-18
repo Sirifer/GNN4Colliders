@@ -24,7 +24,11 @@ class MGNTrainer:
 
         norm_type = {"features": "normal", "labels": "normal"}
 
-        self.graphs = process_data(cfg)
+        self.train_loader, self.val_loader, self.test_loader = process_data(cfg)
+        print(f"train: {self.train_loader}")
+        print(f"val: {self.val_loader}")
+        print(f"test: {self.test_loader}")
+
 
 @hydra.main(version_base=None, config_path=".", config_name="config")
 def do_training(cfg: DictConfig):

@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+random_seed: 2
+
 scheduler:
   lr: 1.E-3
   lr_decay: 1.E-3
@@ -49,15 +51,14 @@ architecture:
 paths:
   data_dir: /global/cfs/projectdirs/trn007/lbl_atlas/data/stats_100K
   save_dir: /global/cfs/projectdirs/trn007/lbl_atlas/data/physicsnemo_graphs/stats_100K
+  training_dir: ./training/
 
 datasets:
   - name: ttH_cp_even
     load_path: ${paths.data_dir}/ttH_NLO.root
-    save_path: ${paths.save_dir}/ttH_NLO_processed.pt
     label: 0
   - name: ttH_cp_odd
     load_path: ${paths.data_dir}/ttH_CPodd.root
-    save_path: ${paths.save_dir}/ttH_CPodd.pt
     label: 1
 
 root_graph:
@@ -67,4 +68,7 @@ root_graph:
   features: ["pt", "eta", "phi", "energy", "btag", "charge", "node_type"]
   globals: []
   weights: ""
-  batch_size: 4096
+  tracking: []
+  chunks: 32
+  batch_size: 8192
+  train_val_test_split: [0.5, 0.25, 0.25]
