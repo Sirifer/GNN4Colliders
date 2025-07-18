@@ -13,7 +13,7 @@ from physicsnemo.launch.logging import (
 )
 from physicsnemo.launch.utils import load_checkpoint, save_checkpoint
 from physicsnemo.distributed.manager import DistributedManager
-from process_data import process_data
+from Dataset import get_dataset
 import json
 
 class MGNTrainer:
@@ -24,7 +24,7 @@ class MGNTrainer:
 
         norm_type = {"features": "normal", "labels": "normal"}
 
-        self.train_loader, self.val_loader, self.test_loader = process_data(cfg)
+        self.train_loader, self.val_loader, self.test_loader = get_dataset(cfg)
         print(f"train: {self.train_loader}")
         print(f"val: {self.val_loader}")
         print(f"test: {self.test_loader}")
