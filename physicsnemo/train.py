@@ -128,7 +128,7 @@ class MGNTrainer:
             T_max=cfg.training.epochs,
             eta_min=cfg.scheduler.lr * cfg.scheduler.lr_decay,
         )
-        self.scaler = GradScaler(self.device)
+        self.scaler = GradScaler('cuda')
 
         # load checkpoint
         self.epoch_init = load_checkpoint(

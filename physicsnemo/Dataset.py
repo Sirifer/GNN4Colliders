@@ -144,7 +144,7 @@ class Root_Graph:
         branches = ["MET_met" if b == "MET_pt" else b for b in branches]
         return branches
 
-    def process(self, max_workers: int = 32):
+    def process(self, max_workers: int = 128):
         branches = self.get_branches()
         with uproot.open(f"{self.load_path}:{self.ttree}") as tree:
             available_branches = set(tree.keys())

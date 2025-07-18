@@ -16,7 +16,7 @@
 random_seed: 2
 
 scheduler:
-  lr: 1.E-3
+  lr: 1.E-4
   lr_decay: 1.E-3
 
 training:
@@ -64,4 +64,4 @@ root_graph:
   tracking: []
   chunks: 32
   batch_size: 8192
-  train_val_test_split: [0.5, 0.25, 0.25]
+  train_val_test_split: [0.75, 0.24, 0.01]
