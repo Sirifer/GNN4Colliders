@@ -42,7 +42,7 @@ def make_graph(node_features: np.array, dtype=torch.float32):
     dphi = phi[src] - phi[dst]
     dphi = torch.remainder(dphi + np.pi, 2 * np.pi) - np.pi
     dR = torch.sqrt(deta ** 2 + dphi ** 2)
-    edge_features = torch.stack([deta, dphi, dR], dim=1)
+    edge_features = torch.stack([dR, deta, dphi], dim=1)
     g.edata['features'] = edge_features
 
     g.globals = torch.tensor([num_nodes], dtype=dtype)
@@ -102,7 +102,7 @@ def process_chunk(args):
             node_features = np.empty((0, len(features)))
         graphs.append(make_graph(node_features, dtype=dtype))
 
-    labels = torch.full((len(graphs),), label, dtype=torch.long)
+    labels = torch.full((len(graphs),), label, dtype=dtype)
     dgl.save_graphs(f"{save_path}/{name}_{chunk_id:02d}.bin", graphs, {'label': labels})
     print(f"Saved {name} chunk {chunk_id:02d} to {save_path}/{name}_{chunk_id:03d}.bin")
     return
@@ -151,8 +151,7 @@ class Root_Graph:
             num_entries = tree.num_entries
 
         print(f"Getting branches: {branches}")
-        graphs = []
-
+        
         step_size = math.ceil(num_entries / self.chunks)
 
         # Prepare chunk arguments for each chunk
@@ -241,6 +240,8 @@ class Root_Graph:
         val_labels = val_label_dict['label']
         test_labels = test_label_dict['label']
 
+        print(f"successfully loaded {self.name}")
+
         return train_graphs, train_labels, val_graphs, val_labels, test_graphs, test_labels
 
 class GraphDataset(Dataset):
@@ -284,8 +285,9 @@ def get_dataset(cfg: DictConfig):
 
     batch_size = cfg.root_graph.batch_size
 
-    train_loader = GraphDataLoader(train_dataset, {'batch_size' : batch_size, 'shuffle' : True})
-    val_loader = GraphDataLoader(val_dataset, {'batch_size' : batch_size, 'shuffle' : False})
-    test_loader = GraphDataLoader(test_dataset, {'batch_size' : batch_size, 'shuffle' : False})
+    train_loader = GraphDataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = GraphDataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    test_loader = GraphDataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
+    print("all data loaded successfully")
     return train_loader, val_loader, test_loader

@@ -20,16 +20,8 @@ scheduler:
   lr_decay: 1.E-3
 
 training:
-  batch_size: 100
   epochs: 100
-  geometries: "healthy"
-  stride: 5
-  rate_noise: 100
-  train_test_split: 0.9
-  loss_weight_1st_timestep: 1
-  loss_weight_other_timesteps: 0.5
-  loss_weight_boundary_nodes: 100
-
+  
 checkpoints:
   ckpt_path: "checkpoints"
   ckpt_name: "model.pt"
@@ -47,6 +39,7 @@ architecture:
   hidden_dim_edge_encoder: 64
   hidden_dim_processor: 64
   hidden_dim_node_decoder: 64
+  out_dim: 1
 
 paths:
   data_dir: /global/cfs/projectdirs/trn007/lbl_atlas/data/stats_100K
