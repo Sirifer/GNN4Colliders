@@ -42,8 +42,8 @@ architecture:
   out_dim: 1
 
 paths:
-  data_dir: /global/cfs/projectdirs/trn007/lbl_atlas/data/stats_all
-  save_dir: /global/cfs/projectdirs/trn007/lbl_atlas/data/physicsnemo_graphs/stats_all
+  data_dir: /global/cfs/projectdirs/atlas/joshua/hackathon_data/stats_all
+  save_dir: /pscratch/sd/j/joshuaho/physicsnemo/graphs/stats_all
   training_dir: ./training_stats_all/
 
 datasets:
@@ -54,7 +54,7 @@ datasets:
     load_path: ${paths.data_dir}/ttH_CPodd.root
     label: 1
 
-root_graph:
+root_dataset:
   ttree: output
   type: torch.bfloat16
   particles: ["jet", "ele", "mu", "ph", "MET"]
@@ -62,6 +62,6 @@ root_graph:
   globals: []
   weights: ""
   tracking: []
-  chunks: 128
+  step_size: 1024
   batch_size: 8192
   train_val_test_split: [0.75, 0.24, 0.01]

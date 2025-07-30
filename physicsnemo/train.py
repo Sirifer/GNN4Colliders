@@ -2,8 +2,9 @@ import time, os
 
 start = time.time()
 import torch
+from torch.nn.parallel import DistributedDataParallel
 from dgl.dataloading import GraphDataLoader
-from torch.cuda.amp import GradScaler
+from torch.amp import GradScaler
 import numpy as np
 import hydra
 from omegaconf import DictConfig
@@ -13,14 +14,26 @@ from physicsnemo.launch.logging import (
 )
 from physicsnemo.launch.utils import load_checkpoint, save_checkpoint
 from physicsnemo.distributed.manager import DistributedManager
-from Dataset import get_dataset
+from dataset import get_dataset
 import json
+
+import random
 
 from sklearn.metrics import roc_auc_score
 
-import MeshGraphNet
+import models.MeshGraphNet as MeshGraphNet
 
 import torch.nn.functional as F
+
+def bce(input, target, device=None, weights=None):
+    if input.shape != target.shape:
+        if input.shape[-1] == 1 and input.shape[:-1] == target.shape:
+            input = input.squeeze(-1)
+        elif target.shape[-1] == 1 and target.shape[:-1] == input.shape:
+            target = target.squeeze(-1)
+
+    loss = F.binary_cross_entropy_with_logits(input, target, reduction='none')
+    return torch.mean(loss)
 
 def weighted_bce(input, target, device=None, weights=None):
     """
@@ -47,12 +60,7 @@ def weighted_bce(input, target, device=None, weights=None):
             target = target.squeeze(-1)
 
     if weights is None:
-        weights = torch.ones_like(target)
-
-    if device is not None:
-        input = input.to(device)
-        target = target.to(device)
-        weights = weights.to(device)
+        weights = torch.ones_like(target).to(device)
 
     # Compute per-element BCE loss (no reduction)
     loss = F.binary_cross_entropy_with_logits(input, target, reduction='none')
@@ -82,17 +90,17 @@ class MGNTrainer:
 
         params = {}
 
-        norm_type = {"features": "normal", "labels": "normal"}
+        start = time.time()
+        self.dataloader, self.valloader, self.testloader = get_dataset(cfg, self.device)
+        print(f"total time loading dataset: {time.time() - start:.2f} seconds")
 
-        self.dataloader, self.valloader, self.testloader = get_dataset(cfg)
-
-        dtype_str = getattr(cfg.root_graph, "type", "torch.float32")
+        dtype_str = getattr(cfg.root_dataset, "type", "torch.float32")
         if isinstance(dtype_str, str) and dtype_str.startswith("torch."):
             self.dtype = getattr(torch, dtype_str.split(".")[-1], torch.float32)
         else:
             self.dtype = torch.float32
 
-        nodes_features = cfg.root_graph.features
+        nodes_features = cfg.root_dataset.features
         edges_features = ["dR", "deta", "dphi"]
         global_features = ["num_nodes"]
 
@@ -173,10 +181,9 @@ class MGNTrainer:
             loss: loss value.
 
         """
-        graph = graph.to(self.device)
         self.optimizer.zero_grad()
         pred = self.model(graph.ndata["features"], graph.edata["features"], graph)
-        loss = weighted_bce(pred, label, device=self.device)
+        loss = bce(pred, label, device=self.device)
         self.backward(loss)
         return loss
 
@@ -192,7 +199,6 @@ class MGNTrainer:
         Returns:
             loss (Tensor): The computed loss value (scalar).
         """
-
         predictions = []
         labels = []
 
@@ -232,6 +238,9 @@ def do_training(cfg: DictConfig):
         cfg: Dictionary of parameters.
 
     """
+    random.seed(cfg.random_seed)
+    np.random.seed(cfg.random_seed)
+    torch.manual_seed(cfg.random_seed)
 
     # initialize distributed manager
     DistributedManager.initialize()
@@ -243,6 +252,20 @@ def do_training(cfg: DictConfig):
 
     # initialize trainer
     trainer = MGNTrainer(logger, cfg, dist)
+
+    if dist.distributed:
+        ddps = torch.cuda.Stream()
+        with torch.cuda.stream(ddps):
+            trainer.model = DistributedDataParallel(
+                trainer.model,
+                device_ids=[dist.local_rank],  # Set the device_id to be
+                                               # the local rank of this process on
+                                               # this node
+                output_device=dist.device,
+                broadcast_buffers=dist.broadcast_buffers,
+                find_unused_parameters=dist.find_unused_parameters,
+            )
+        torch.cuda.current_stream().wait_stream(ddps)
 
     # training loop
     start = time.time()

@@ -21,5 +21,3 @@ RUN pip install --no-cache-dir mpi4py jupyter uproot
 
 # (Optional) Expose Jupyter port
 EXPOSE 8888
-
-
