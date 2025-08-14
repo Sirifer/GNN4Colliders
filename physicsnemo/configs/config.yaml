@@ -16,7 +16,7 @@
 random_seed: 2
 
 scheduler:
-  lr: 1.E-4
+  lr: 1.E-3
   lr_decay: 1.E-3
 
 training:
@@ -24,27 +24,24 @@ training:
   
 checkpoints:
   ckpt_path: "checkpoints"
-  ckpt_name: "model.pt"
+  ckpt_name: "config"
 
 performance:
   amp: False
   jit: False
 
-testing:
-  graph: "s0090_0001.21.0.grph"
-
 architecture:
-  processor_size: 5
-  hidden_dim_node_encoder: 64
-  hidden_dim_edge_encoder: 64
-  hidden_dim_processor: 64
-  hidden_dim_node_decoder: 64
+  processor_size: 8
+  hidden_dim_node_encoder: 128
+  hidden_dim_edge_encoder: 128
+  hidden_dim_processor: 128
+  hidden_dim_node_decoder: 128
   out_dim: 1
 
 paths:
-  data_dir: /global/cfs/projectdirs/atlas/joshua/hackathon_data/stats_all
-  save_dir: /pscratch/sd/j/joshuaho/physicsnemo/graphs/stats_all
-  training_dir: ./training_stats_all/
+  data_dir: /global/cfs/projectdirs/atlas/joshua/hackathon_data/stats_100K
+  save_dir: /pscratch/sd/j/joshuaho/physicsnemo/graphs/stats_100K
+  training_dir: ./training_stats_100K/
 
 datasets:
   - name: ttH_cp_even
@@ -62,6 +59,6 @@ root_dataset:
   globals: []
   weights: ""
   tracking: []
-  step_size: 1024
+  step_size: 8192
   batch_size: 8192
   train_val_test_split: [0.75, 0.24, 0.01]

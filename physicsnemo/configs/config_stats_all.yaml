@@ -24,14 +24,11 @@ training:
   
 checkpoints:
   ckpt_path: "checkpoints"
-  ckpt_name: "model.pt"
+  ckpt_name: "config_stats_all"
 
 performance:
   amp: False
   jit: False
-
-testing:
-  graph: "s0090_0001.21.0.grph"
 
 architecture:
   processor_size: 5
@@ -42,9 +39,9 @@ architecture:
   out_dim: 1
 
 paths:
-  data_dir: /global/cfs/projectdirs/atlas/joshua/hackathon_data/stats_100K
-  save_dir: /pscratch/sd/j/joshuaho/physicsnemo/graphs/stats_100K
-  training_dir: ./training_stats_100K/
+  data_dir: /global/cfs/projectdirs/atlas/joshua/hackathon_data/stats_all
+  save_dir: /pscratch/sd/j/joshuaho/physicsnemo/graphs/stats_all
+  training_dir: ./training_stats_all/
 
 datasets:
   - name: ttH_cp_even
@@ -62,6 +59,7 @@ root_dataset:
   globals: []
   weights: ""
   tracking: []
-  chunks: 10
+  step_size: 81920
   batch_size: 8192
   train_val_test_split: [0.75, 0.24, 0.01]
+  prebatch: True

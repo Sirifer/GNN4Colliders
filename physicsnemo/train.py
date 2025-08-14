@@ -14,73 +14,15 @@ from physicsnemo.launch.logging import (
 )
 from physicsnemo.launch.utils import load_checkpoint, save_checkpoint
 from physicsnemo.distributed.manager import DistributedManager
-from dataset import get_dataset
-import json
 
+import json
+from tqdm import tqdm
 import random
 
-from sklearn.metrics import roc_auc_score
-
 import models.MeshGraphNet as MeshGraphNet
+from dataset.Dataset import get_dataset
+import metrics
 
-import torch.nn.functional as F
-
-def bce(input, target, device=None, weights=None):
-    if input.shape != target.shape:
-        if input.shape[-1] == 1 and input.shape[:-1] == target.shape:
-            input = input.squeeze(-1)
-        elif target.shape[-1] == 1 and target.shape[:-1] == input.shape:
-            target = target.squeeze(-1)
-
-    loss = F.binary_cross_entropy_with_logits(input, target, reduction='none')
-    return torch.mean(loss)
-
-def weighted_bce(input, target, device=None, weights=None):
-    """
-    Compute a weighted and label-normalized binary cross entropy (BCE) loss.
-
-    For each unique label in the target tensor, the BCE loss is computed and weighted,
-    then normalized by the sum of weights for that label. The final loss is the mean
-    of these per-label normalized losses.
-
-    Args:
-        input (Tensor): Predicted logits of shape (N, ...).
-        target (Tensor): Ground truth labels of shape (N, ...), with discrete label values.
-        device (torch.device or None): Device to move tensors to (optional).
-        weights (Tensor or None): Optional tensor of per-sample weights, same shape as input/target.
-
-    Returns:
-        Tensor: Scalar tensor representing the normalized weighted BCE loss.
-    """
-
-    if input.shape != target.shape:
-        if input.shape[-1] == 1 and input.shape[:-1] == target.shape:
-            input = input.squeeze(-1)
-        elif target.shape[-1] == 1 and target.shape[:-1] == input.shape:
-            target = target.squeeze(-1)
-
-    if weights is None:
-        weights = torch.ones_like(target).to(device)
-
-    # Compute per-element BCE loss (no reduction)
-    loss = F.binary_cross_entropy_with_logits(input, target, reduction='none')
-
-    # Vectorized label normalization
-    unique_labels = torch.unique(target)
-    normalized_losses = []
-    for label in unique_labels:
-        label_mask = (target == label)
-        label_weights = weights[label_mask]
-        label_losses = loss[label_mask]
-        weight_sum = label_weights.sum()
-        if weight_sum > 0:
-            label_loss = (label_weights * label_losses).sum() / weight_sum
-            normalized_losses.append(label_loss)
-
-    if normalized_losses:
-        return torch.stack(normalized_losses).mean()
-    else:
-        return torch.tensor(0.0, device=input.device)
 
 class MGNTrainer:
     def __init__(self, logger, cfg, dist):
@@ -91,37 +33,28 @@ class MGNTrainer:
         params = {}
 
         start = time.time()
-        self.dataloader, self.valloader, self.testloader = get_dataset(cfg, self.device)
+        self.trainloader, self.valloader, self.testloader = get_dataset(cfg, self.device)
         print(f"total time loading dataset: {time.time() - start:.2f} seconds")
 
-        dtype_str = getattr(cfg.root_dataset, "type", "torch.float32")
+        dtype_str = getattr(cfg.root_dataset, "dtype", "torch.float32")
         if isinstance(dtype_str, str) and dtype_str.startswith("torch."):
             self.dtype = getattr(torch, dtype_str.split(".")[-1], torch.float32)
         else:
             self.dtype = torch.float32
 
-        nodes_features = cfg.root_dataset.features
-        edges_features = ["dR", "deta", "dphi"]
+        node_features = list(cfg.root_dataset.features.values())[0]
+        edge_features = ["dR", "deta", "dphi"]
         global_features = ["num_nodes"]
 
-        params["infeat_nodes"] = len(nodes_features)
-        params["infeat_edges"] = len(edges_features)
+        params["infeat_nodes"] = len(node_features)
+        params["infeat_edges"] = len(edge_features)
         params["infeat_globals"] = len(global_features)
-        params["out_dim"] = cfg.architecture.hidden_dim_node_encoder
-        params["node_features"] = list(nodes_features)
-        params["edges_features"] = edges_features
+        params["out_dim"] = cfg.architecture.out_dim
+        params["node_features"] = list(node_features)
+        params["edge_features"] = edge_features
         params["global_features"] = global_features
 
-        self.model = MeshGraphNet.MeshGraphNet(
-            params["infeat_nodes"],
-            params["infeat_edges"],
-            params['out_dim'],
-            processor_size=cfg.architecture.processor_size,
-            hidden_dim_node_encoder=cfg.architecture.hidden_dim_node_encoder,
-            hidden_dim_edge_encoder=cfg.architecture.hidden_dim_edge_encoder,
-            hidden_dim_processor=cfg.architecture.hidden_dim_processor,
-            hidden_dim_node_decoder=cfg.architecture.hidden_dim_node_decoder,
-        )
+        self.model = MeshGraphNet.MeshGraphNet(cfg.architecture)
         self.model = self.model.to(dtype=self.dtype, device=self.device)
 
         if cfg.performance.jit:
@@ -168,7 +101,7 @@ class MGNTrainer:
             loss.backward()
             self.optimizer.step()
 
-    def train(self, graph, label):
+    def train(self, graph, metadata):
         """
         Perform one training iteration over one graph. The training is performed
         over multiple timesteps, where the number of timesteps is specified in
@@ -181,11 +114,16 @@ class MGNTrainer:
             loss: loss value.
 
         """
+        graph = graph.to(self.device, non_blocking=True)
+        globals = metadata['globals'].to(self.device, non_blocking=True)
+        label = metadata['label'].to(self.device, non_blocking=True)
+        weight =  metadata['weight'].to(self.device, non_blocking=True)
+
         self.optimizer.zero_grad()
-        pred = self.model(graph.ndata["features"], graph.edata["features"], graph)
-        loss = bce(pred, label, device=self.device)
+        pred = self.model(graph.ndata["features"], graph.edata["features"], globals, graph, metadata)
+        loss = metrics.weighted_bce(pred, label, weights=weight)
         self.backward(loss)
-        return loss
+        return loss.detach()
 
     @torch.no_grad()
     def eval(self):
@@ -201,18 +139,25 @@ class MGNTrainer:
         """
         predictions = []
         labels = []
+        weights = []
 
-        for graph, label in self.valloader:
-
-            graph = graph.to(self.device)
-            pred = self.model(graph.ndata["features"], graph.edata["features"], graph)
+        for graph, metadata in self.valloader:
+            
+            graph = graph.to(self.device, non_blocking=True)
+            globals = metadata['globals'].to(self.device, non_blocking=True)
+            label = metadata['label'].to(self.device, non_blocking=True)
+            weight =  metadata['weight'].to(self.device, non_blocking=True)
+            
+            pred = self.model(graph.ndata["features"], graph.edata["features"], globals, graph, metadata)
             predictions.append(pred)
-            labels.append(label)     
+            labels.append(label)
+            weights.append(weight)     
 
         predictions = torch.cat(predictions, dim=0)
         labels = torch.cat(labels, dim=0)
+        weights = torch.cat(weights, dim=0)
 
-        loss = weighted_bce(predictions, labels, device=self.device)
+        loss = metrics.weighted_bce(predictions, labels, weights=weights)
         
         # Convert logits to probabilities
         prob = torch.sigmoid(predictions)
@@ -223,13 +168,13 @@ class MGNTrainer:
 
         # Calculate AUC
         try:
-            auc = roc_auc_score(labels_flat, prob_flat)
+            auc = metrics.roc_auc_score(labels_flat, prob_flat)
         except ValueError:
             auc = float('nan')  # Not enough classes present for AUC
 
         return loss, auc
 
-@hydra.main(version_base=None, config_path=".", config_name="config")
+@hydra.main(version_base=None, config_path="./configs/", config_name="tHjb_CP_0_vs_45")
 def do_training(cfg: DictConfig):
     """
     Perform training over all graphs in the dataset.
@@ -247,8 +192,9 @@ def do_training(cfg: DictConfig):
     dist = DistributedManager()
 
     # initialize loggers
+    os.makedirs(cfg.checkpoints.ckpt_path, exist_ok=True)
     logger = PythonLogger("main")
-    logger.file_logging()
+    logger.file_logging(os.path.join(cfg.checkpoints.ckpt_path, "train.log"))
 
     # initialize trainer
     trainer = MGNTrainer(logger, cfg, dist)
@@ -274,13 +220,14 @@ def do_training(cfg: DictConfig):
 
         # Training
         train_loss = []
-        for graph, label in trainer.dataloader:
+        for graph, metadata in tqdm(trainer.trainloader, desc=f"epoch {epoch} trianing"):
             trainer.model.train()
-            train_loss.append(trainer.train(graph, label))
+            loss = trainer.train(graph, metadata)
+            train_loss.append(loss.item())
         
         val_loss, val_auc = trainer.eval()
 
-        train_loss = torch.mean(torch.stack(train_loss)).item()
+        train_loss = torch.tensor(train_loss).mean()
 
         logger.info(
             f"epoch: {epoch}, loss: {train_loss:10.3e}, val_loss: {val_loss:10.3e}, val_auc = {val_auc:10.3e}, time per epoch: {(time.time()-start):10.3e}"
