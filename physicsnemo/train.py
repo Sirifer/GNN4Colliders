@@ -23,14 +23,13 @@ import models.MeshGraphNet as MeshGraphNet
 from dataset.Dataset import get_dataset
 import metrics
 
+import utils
 
 class MGNTrainer:
     def __init__(self, logger, cfg, dist):
         # set device
         self.device = dist.device
         logger.info(f"Using {self.device} device")
-
-        params = {}
 
         start = time.time()
         self.trainloader, self.valloader, self.testloader = get_dataset(cfg, self.device)
@@ -42,20 +41,10 @@ class MGNTrainer:
         else:
             self.dtype = torch.float32
 
-        node_features = list(cfg.root_dataset.features.values())[0]
-        edge_features = ["dR", "deta", "dphi"]
-        global_features = ["num_nodes"]
-
-        params["infeat_nodes"] = len(node_features)
-        params["infeat_edges"] = len(edge_features)
-        params["infeat_globals"] = len(global_features)
-        params["out_dim"] = cfg.architecture.out_dim
-        params["node_features"] = list(node_features)
-        params["edge_features"] = edge_features
-        params["global_features"] = global_features
-
-        self.model = MeshGraphNet.MeshGraphNet(cfg.architecture)
+        self.model = utils.build_from_module(cfg.architecture)
         self.model = self.model.to(dtype=self.dtype, device=self.device)
+        # num_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        # print(f"Number of trainable parameters: {num_params}")
 
         if cfg.performance.jit:
             self.model = torch.jit.script(self.model).to(self.device)
@@ -81,7 +70,6 @@ class MGNTrainer:
             device=self.device,
         )
 
-        self.params = params
         self.cfg = cfg
 
     def backward(self, loss):
@@ -244,9 +232,6 @@ def do_training(cfg: DictConfig):
         )
         start = time.time()
         trainer.scheduler.step()
-
-        with open(cfg.checkpoints.ckpt_path + "/parameters.json", "w") as outf:
-            json.dump(trainer.params, outf, indent=4)
     logger.info("Training completed!")
 
 

@@ -1,0 +1,82 @@
+# ignore_header_test
+# Copyright 2023 Stanford University
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+random_seed: 2
+
+scheduler:
+  lr: 1.E-3
+  lr_decay: 1.E-3
+
+training:
+  epochs: 100
+  
+checkpoints:
+  ckpt_path: "checkpoints"
+  ckpt_name: "tHjb_CP_0_vs_90_edge_network"
+
+performance:
+  amp: False
+  jit: False
+
+architecture:
+  module: models.Edge_Network
+  class: Edge_Network
+  args:
+    input_dim_nodes: 7
+    input_dim_edges: 3
+    input_dim_globals: 1
+    hid_size: 64
+    n_layers: 4
+    n_proc_steps: 4
+    out_dim: 1
+
+paths:
+  data_dir: /global/cfs/projectdirs/atlas/joshua/ttHCP/ntuples/v02/preselection/merged_fixed/train/
+  save_dir: /pscratch/sd/j/joshuaho/physicsnemo/ttHCP/graphs/tHjb_CP_0_vs_90/
+  training_dir: ./tHjb_CP_0_vs_90_edge_network/
+
+datasets:
+  - name: tHjb_cp_0_had
+    load_path: ${paths.data_dir}/merged_aMCPy8_tHjb125_CP_0_AF3_had_scaled.root
+    label: 0
+  - name: tHjb_cp_0_lep
+    load_path: ${paths.data_dir}/merged_aMCPy8_tHjb125_CP_0_AF3_lep_scaled.root
+    label: 0
+  - name: tHjb_cp_90_had
+    load_path: ${paths.data_dir}/merged_aMCPy8_tHjb125_CP_90_AF3_had_scaled.root
+    label: 1
+  - name: tHjb_cp_90_lep
+    load_path: ${paths.data_dir}/merged_aMCPy8_tHjb125_CP_90_AF3_lep_scaled.root
+    label: 1
+
+root_dataset:
+  ttree: output
+  dtype: torch.bfloat16
+  features:
+    # pt, eta, phi, energy, btag, charge, node_type
+    jet: [m_jet_pt, m_jet_eta, m_jet_phi, CALC_E, m_jet_PCbtag, 0, 0]
+    electron: [m_el_pt, m_el_eta, m_el_phi, CALC_E, 0, m_el_charge, 1]
+    muon: [m_mu_pt, m_mu_eta, m_mu_phi, CALC_E, 0, m_mu_charge, 2]
+    photon: [ph_pt_myy, ph_eta, ph_phi, CALC_E, 0, 0, 3]
+    met: [m_met, 0, m_met_phi, CALC_E, 0, 0, 4]
+  globals: [NUM_NODES]
+  weights: 1
+  tracking: []
+  step_size: 16384
+  batch_size: 16384
+  train_val_test_split: [0.5, 0.25, 0.25]
+  prebatch: 
+    enabled: True
+    chunk_size: 512
