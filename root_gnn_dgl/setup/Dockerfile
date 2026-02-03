@@ -1,6 +1,6 @@
 FROM nvcr.io/nvidia/dgl:25.05-py3
 
-WORKDIR /global/cfs/projectdirs/atlas/joshua/GNN4Colliders
+WORKDIR /workspace
 
 LABEL maintainer.name="Joshua Ho"
 LABEL maintainer.email="ho22joshua@berkeley.edu"

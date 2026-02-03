@@ -38,8 +38,8 @@ Datasets:
       file_names: ttH_NLO_inc.root
       tree_name: output
       fold_var: Number
-      raw_dir: /global/cfs/projectdirs/trn007/lbl_atlas/data/stats_all/
-      save_dir: /global/cfs/projectdirs/trn007/lbl_atlas/data/processed_graphs/stats_all/pretraining_multiclass/
+      raw_dir: /global/cfs/projectdirs/atlas/joshua/gnn_data/stats_all/
+      save_dir: /global/cfs/projectdirs/atlas/joshua/gnn_data/processed_graphs/stats_all/pretraining_multiclass/
       node_branch_names:
         - [jet_pt, ele_pt, mu_pt, ph_pt, MET_met]
         - [jet_eta, ele_eta, mu_eta, ph_eta, 0]

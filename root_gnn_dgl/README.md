@@ -1,53 +1,62 @@
+
 # root_gnn_dgl
 
-## Data Directory (for Hackathon)
-`/global/cfs/projectdirs/trn007/lbl_atlas/data/`
+Pretrained DGL-based ROOT graph neural network.
 
-* `stats_all`: full statistics sample, ~10M events per process
-* `stats_100K`: reduced statistics sample, 100K events per process
-* `processed_graphs`: graphs that have already been processed
-* `scores`: a copy of the samples along with the GNN scores for each event
+## Overview
+- Stable release with pretrained model weights.
 
-## Environment Setup
+Pretrained model location: ``
 
-The environment dependencies for this project are listed in `setup/environment.yml`. Follow the steps below to set up the environment:
+## Conda setup
 
-### Step 1: Install Conda
-If you don’t already have Conda installed, install either Miniconda (lightweight) or Anaconda (full version):
-
-- **Miniconda**: Download and install from [https://docs.conda.io/en/latest/miniconda.html](https://docs.conda.io/en/latest/miniconda.html).
-- **Anaconda**: Download and install from [https://www.anaconda.com/products/distribution](https://www.anaconda.com/products/distribution).
-
-### Step 2: Clone the Repository
-Clone this repository to your local machine:
 ```bash
-git init
-git lfs install
-git clone https://huggingface.co/HWresearch/GNN4Colliders
-```
-If you want to clone without large files - just their pointers
-```bash
-GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/HWresearch/GNN4Colliders
+cd setup
+conda env create -f environment.yml
+conda activate pytorch
+cd ..
+python setup/test_setup.py 
 ```
 
-### Step 3: Create the Conda Environment
-Use the `environment.yml` file to create the Conda environment:
+##  Container Setup (Podman-HPC)
+
+- NERSC Perlmutter environment with `podman-hpc` available.
+- Access to `joshuaho/pytorch:1.0` on Docker Hub [https://hub.docker.com/r/joshuaho/pytorch](https://hub.docker.com/r/joshuaho/pytorch)
+
+### Pull the Prebuilt Image
+
 ```bash
-conda env create -f setup/environment.yml -n <environment_name>
+podman-hpc pull docker.io/joshuaho/pytorch:1.0
 ```
 
-### Step 4: Activate the Environment
-Activate the newly created environment:
-```bash
-conda activate <environment_name>
-```
-Replace <environment_name> with the name of the environment specified in Step 4.
+Or, you can build your own container here:
 
-### Step 5: Test the Environment
+```bash
+cd setup
+source build_image.sh
+```
+
+Run the image and mount the paths you need, replaceing `<source>` with source directory path and `<target>` with the path for when you are inside the container.
+```bash
+
+podman-hpc run \
+  -it \
+  --mount type=bind,source=<source>,target=<target> \
+  --rm \
+  --network host \
+  --gpu \
+  --userns keep-id \
+  --shm-size=32g \
+  joshuaho/pytorch:1.0
+  ```
+
+### Test the Environment
 Run the `setup/test_setup.py` script to confirm that all packages needed for training are properly set up.
 ```bash
 python setup/test_setup.py
 ```
+
+
 ## Running the Demo
 The demo training is an example of our ML workflow, consisting of training a pretrained model, then finetuning it for an analysis task, while also training a model for the analysis task from scratch. The config files for the demo are located in the directory `configs/stats_100K/`. The demo can be run on a login node on Perlmutter (if enough GPU memory is availble).
 

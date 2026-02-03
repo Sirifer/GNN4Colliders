@@ -31,7 +31,7 @@ python scripts/training_script.py --config configs/stats_100K/ttH_CP_even_vs_odd
 
 python scripts/training_script.py --config configs/stats_100K/finetuning_ttH_CP_even_vs_odd.yaml --preshuffle --nocompile --lazy
 
-# Inference
+# Inference: Writing GNN Scores for from-scratch training and finetuned training to root files
 files=(
     "ttH_NLO.root"
     "ttH_CPodd.root"
@@ -50,8 +50,8 @@ branch_name=(
 for ((j=0; j<${#files[@]}; j++))
 do
     python scripts/inference.py \
-        --target "/global/cfs/projectdirs/trn007/lbl_atlas/data/stats_100K/${files[j]}" \
-        --destination "/global/cfs/projectdirs/trn007/lbl_atlas/data/scores/stats_100K/${files[j]}" \
+        --target "/global/cfs/projectdirs/atlas/joshua/gnn_data/stats_100K/${files[j]}" \
+        --destination "/global/cfs/projectdirs/atlas/joshua/gnn_data/scores/stats_100K/${files[j]}" \
         --config "${config[@]}" \
         --branch_name "${branch_name[@]}" \
         --chunks 1 \

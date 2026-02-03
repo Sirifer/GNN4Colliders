@@ -1,4 +1,4 @@
-name: dgl
+name: pytorch
 channels:
   - pytorch
   - dglteam/label/cu118
@@ -388,4 +388,3 @@ dependencies:
       - typing-extensions==4.11.0
       - tzdata==2024.1
       - uproot==5.3.7
-prefix: /global/homes/j/joshuaho/.conda/envs/dgl
