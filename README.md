@@ -1,7 +1,6 @@
 ---
 license: mit
 ---
-
 ## Abstract
 
 We introduce a foundation model for event classification in high-energy physics, built on a **Graph Neural Network** architecture and trained on **120 million simulated proton-proton collision events** spanning 12 distinct physics processes. The model is *pretrained* to learn a general and robust representation of collision data using challenging multiclass and multilabel classification tasks.
