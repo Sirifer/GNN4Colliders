@@ -122,16 +122,16 @@ Inference is done by `scripts/inference.py`. This script applies the model defin
 
 ```bash
 python scripts/inference.py \
-    --target "/global/cfs/projectdirs/trn007/lbl_atlas/data/stats_100K/ttH_NLO.root" \
-    --destination "/global/cfs/projectdirs/trn007/lbl_atlas/data/scores/stats_100K/ttH_NLO.root" \
+    --target "/global/cfs/projectdirs/atlas/joshua/gnn_data/stats_100K/ttH_NLO.root" \
+    --destination "/global/cfs/projectdirs/atlas/joshua/gnn_data/scores/stats_100K/ttH_NLO.root" \
     --config "configs/stats_100K/finetuning_ttH_CP_even_vs_odd.yaml" \
+    --branch_name "GNN_Score" \
     --chunks 1 \
     --chunkno 0 \
-    --write \
-    --branch 'GNN_Score'
+    --write
 ```
 
-You can also input a list as the `--config` and the `--branch` to simultaneously apply multiple models onto the same set of samples. An example on how to do this in shell script is in the `run_demo.sh` file.
+You can also input a list as the `--config` and the `--branch_name` to simultaneously apply multiple models onto the same set of samples. An example on how to do this in shell script is in the `run_demo.sh` file.
 
 ## Running Jobs + Parallelization
 
