@@ -1,14 +1,18 @@
 
 # root_gnn_dgl
 
-Pretrained DGL-based ROOT graph neural network.
+Pretrained DGL-based ROOT graph neural network. 
+
+Pretrained model location: `/global/cfs/projectdirs/atlas/joshua/Pretrained_GNN/multiclass_pretrained_model_12/`
+To use the pretrained model, take a look at a finetuning config in `configs`.
+Replace `pretraining_path:` with `/global/cfs/projectdirs/atlas/joshua/Pretrained_GNN/multiclass_pretrained_model_12/model_epoch_71.pt`.
 
 ## Overview
 - Stable release with pretrained model weights.
 
-Pretrained model location: ``
-
 ## Conda setup
+
+The conda environment is required for the inference step: applying the GNN onto root files and saving GNN scores as an additional branch. This is because the infereces script uses pyROOT.
 
 ```bash
 cd setup
@@ -22,6 +26,8 @@ python setup/test_setup.py
 
 - NERSC Perlmutter environment with `podman-hpc` available.
 - Access to `joshuaho/pytorch:1.0` on Docker Hub [https://hub.docker.com/r/joshuaho/pytorch](https://hub.docker.com/r/joshuaho/pytorch)
+
+The inference step requires the conda environment, since the container does not contain ROOT.
 
 ### Pull the Prebuilt Image
 

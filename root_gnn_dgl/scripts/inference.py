@@ -1,6 +1,5 @@
 import sys
-import os
-file_path = os.getcwd()
+file_path = "/global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl"
 sys.path.append(file_path)
 import os
 import argparse
@@ -135,6 +134,7 @@ def main():
 
     import time
     start  = time.time()
+    import ROOT
     import torch
     from array import array
     import numpy as np
@@ -186,6 +186,7 @@ def main():
     lend = time.time()
     print('Loader finished in {:.2f} seconds'.format(lend - lstart))
     sample_graph, _, _, global_sample = loader[0]
+    global_sample = []
 
     print('dset length =', len(dset))
     print('loader length =', len(loader))
@@ -197,6 +198,7 @@ def main():
         for config_file, branch in zip(args.config, args.branch_name):
             config = load_config(config_file)
             model = utils.buildFromConfig(config['Model'], {'sample_graph' : sample_graph, 'sample_global': global_sample}).to(device)
+            
             if args.ckpt < 0:
                 ep, checkpoint = utils.get_best_epoch(config, var=args.var, mode='max', device=device)
             else:
@@ -246,41 +248,55 @@ def main():
             all_labels[branch] = labels
             all_tracking[branch] = tracking_info
 
-
     if args.write:
-        import uproot
-        import awkward as ak
+        from ROOT import std
+        # Open the original ROOT file
+        infile = ROOT.TFile.Open(args.target)
+        tree = infile.Get(dset_config['args']['tree_name'])
 
-        # Open the original ROOT file and get the tree
-        infile = uproot.open(args.target)
-        tree = infile[dset_config['args']['tree_name']]
-
-        # Read the original tree as an awkward array
-        original_data = tree.arrays(library="ak")
-
-        # Prepare new branches as dicts of arrays
-        new_branches = {}
-        n_entries = len(original_data)
-        for branch, scores in all_scores.items():
-            # Ensure the scores array is the right length
-            scores = np.asarray(scores)
-            if scores.shape[0] != n_entries:
-                raise ValueError(f"Branch '{branch}' has {scores.shape[0]} entries, but tree has {n_entries}")
-            new_branches[branch] = scores
-
-        # Merge all arrays (original + new branches)
-        # Convert awkward to dict of numpy arrays for uproot
-        out_dict = {k: np.asarray(v) for k, v in ak.to_numpy(original_data).items()}
-        out_dict.update(new_branches)
-
-        # Write to new ROOT file
+        # Create the destination directory if it doesn't exist
         os.makedirs(os.path.split(args.destination)[0], exist_ok=True)
-        with uproot.recreate(args.destination) as outfile:
-            outfile.mktree(dset_config['args']['tree_name'], {k: v.dtype for k, v in out_dict.items()})
-            outfile[dset_config['args']['tree_name']].extend(out_dict)
 
-        print(f"Wrote new ROOT file {args.destination} with new branches {list(new_branches.keys())}")
+        # Create a new ROOT file to write the modified tree
+        outfile = ROOT.TFile.Open(args.destination, 'RECREATE')
 
+        # Clone the original tree structure
+        outtree = tree.CloneTree(0)
+
+        # Create branches for all scores
+        branch_vectors = {}
+        for branch, scores in all_scores.items():
+            if isinstance(scores[0], (list, tuple, np.ndarray)) and len(scores[0]) > 1:
+                # Create a new branch for vectors
+                branch_vectors[branch] = std.vector('float')()
+                outtree.Branch(branch, branch_vectors[branch])
+            else:
+                # Create a new branch for single floats
+                branch_vectors[branch] = array('f', [0])
+                outtree.Branch(branch, branch_vectors[branch], f'{branch}/F')
+
+        # Fill the tree
+        for i in range(tree.GetEntries()):
+            tree.GetEntry(i)
+
+            for branch, scores in all_scores.items():
+                branch_data = branch_vectors[branch]
+                if isinstance(branch_data, array):  # Check if it's a single float array
+                    branch_data[0] = float(scores[i])
+                else:  # Assume it's a std::vector<float>
+                    branch_data.clear()
+                    for value in scores[i]:
+                        branch_data.push_back(float(value))
+
+            outtree.Fill()
+
+        # Write the modified tree to the new file
+        print(f'Writing to file {args.destination}')
+        print(f'Input entries: {tree.GetEntries()}, Output entries: {outtree.GetEntries()}')
+        print(f'Wrote scores to {args.branch_name}')
+        outtree.Write()
+        outfile.Close()
+        infile.Close()
     else:
         os.makedirs(os.path.split(args.destination)[0], exist_ok=True)
         np.savez(args.destination, scores=all_scores, labels=all_labels, tracking_info=all_tracking)
