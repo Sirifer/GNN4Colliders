@@ -185,7 +185,9 @@ class RootDataset(DGLDataset):
                     globals.append(torch.zeros(len(self.global_features)))
                     for i_ti, tr_branch in enumerate(self.tracking_info):
                         if isinstance(tr_branch, str):
-                            tracking[-1][i_ti] = ch[tr_branch]
+                            dtype = tracking[-1].dtype
+                            tracking[-1][i_ti] = torch.as_tensor(ch[tr_branch], dtype=dtype)
+                            # tracking[-1][i_ti] = ch[tr_branch]
                         else:
                             tracking[-1][i_ti] = tr_branch
                     for i_gl, gl_branch in enumerate(self.global_features):
