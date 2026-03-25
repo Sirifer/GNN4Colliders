@@ -16,7 +16,7 @@ time="${hours}:00:00"
 
 for job in "${configs[@]}"
 do
-  sbatch --job-name="$job" --time="$time" /global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/jobs/run_job.sh "$job"
+  sbatch --job-name="$job" --time="$time" /global/cfs/projectdirs/atlas/joshua/gnn/root_gnn_dgl/jobs/training/conda/run_job.sh "$job"
   ((counter++))
 done
 

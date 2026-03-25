@@ -1,3 +1,13 @@
+#!/bin/bash
+
+ENTRYPOINT=$1
+shift
+ARGUEMENTS="$*"
+
+echo "launched image"
+echo "Entrypoint = $ENTRYPOINT"
+echo "Arguements = $ARGUEMENTS"
+
 podman-hpc run \
   -it \
   --mount type=bind,source=/pscratch/sd/j/joshuaho/,target=/pscratch/sd/j/joshuaho/ \
@@ -6,4 +16,6 @@ podman-hpc run \
   --network host \
   --gpu \
   --shm-size=32g \
-  joshuaho/pytorch:1.0
+  joshuaho/pytorch:1.0 \
+  $ENTRYPOINT \
+  $ARGUEMENTS

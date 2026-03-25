@@ -69,7 +69,7 @@ def check_dataset_files(yaml_file, rerun=False):
                 # Optionally rerun data prep
                 if rerun:
                     print(f"  Reprocessing dataset '{dataset_name}' ...")
-                    prep_command = f"bash/prep_data.sh {yaml_file} {dataset_name} {chunks}"
+                    prep_command = f"jobs/prep_data/prep_data.sh {yaml_file} {dataset_name} {chunks}"
                     try:
                         subprocess.run(prep_command, shell=True, check=True)
                     except subprocess.CalledProcessError as e:
@@ -94,15 +94,10 @@ def main(pargs):
         configs = [p.strip() for p in pargs.configs.split(',')]
     else:
         configs = [
-            "attention/ttH_CP_even_vs_odd.yaml",
-
-            "stats_100K/finetuning_ttH_CP_even_vs_odd.yaml",
-            "stats_100K/pretraining_multiclass.yaml",
-            "stats_100K/ttH_CP_even_vs_odd.yaml",
-
-            "stats_all/finetuning_ttH_CP_even_vs_odd.yaml",
-            "stats_all/pretraining_multiclass.yaml",
-            "stats_all/ttH_CP_even_vs_odd.yaml",
+            "higgs_production/baseline.yaml",
+            "higgs_production/higgs_production_batch_size/higgs_production_bs_2048.yaml",
+            "higgs_production/higgs_production_batch_size/higgs_production_bs_4096.yaml",
+            "higgs_production/higgs_production_batch_size/higgs_production_bs_8192.yaml",
         ]
 
     for config in configs:

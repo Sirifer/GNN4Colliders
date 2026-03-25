@@ -9,6 +9,8 @@ import time
 import numpy as np
 from root_gnn_base import utils
 
+FEATURE_DTYPE = torch.float32
+
 def node_features_from_tree(ch, node_branch_names, node_branch_types, node_feature_scales):
     lengths = []
     for branch, node_type in zip(node_branch_names[0], node_branch_types):
@@ -27,7 +29,7 @@ def node_features_from_tree(ch, node_branch_names, node_branch_types, node_featu
             feat = []
             for i, length in enumerate(lengths):
                 feat.extend([i,]*length)
-            features.append(torch.tensor(feat))
+            features.append(torch.tensor(feat, dtype=FEATURE_DTYPE))
             continue
         feat = []
         itype = 0
@@ -43,7 +45,7 @@ def node_features_from_tree(ch, node_branch_names, node_branch_types, node_featu
             elif node_type == 'vector':
                 feat.extend(ch[branch])
             itype += 1
-        features.append(torch.tensor(feat))
+        features.append(torch.as_tensor(np.asarray(feat, dtype=np.float32), dtype=FEATURE_DTYPE))
     return torch.stack(features, dim=1) * node_feature_scales, lengths
 
 def full_connected_graph(n_nodes, self_loops=True):
@@ -81,7 +83,7 @@ class RootDataset(DGLDataset):
         self.file_names = file_names
         self.node_branch_names = node_branch_names
         self.node_branch_types = node_branch_types
-        self.node_feature_scales = torch.tensor([float(sf) for sf in node_feature_scales])
+        self.node_feature_scales = torch.tensor([float(sf) for sf in node_feature_scales], dtype=FEATURE_DTYPE)
         self.tree_name = tree_name
         self.fold_var = fold_var
         self.tracking_info = tracking_info
@@ -181,8 +183,8 @@ class RootDataset(DGLDataset):
                 if passed:
                     graphs.append(self.make_graph(ch))
                     labels.append(self.label)
-                    tracking.append(torch.zeros(len(self.tracking_info), dtype=torch.double))
-                    globals.append(torch.zeros(len(self.global_features)))
+                    tracking.append(torch.zeros(len(self.tracking_info), dtype=FEATURE_DTYPE))
+                    globals.append(torch.zeros(len(self.global_features), dtype=FEATURE_DTYPE))
                     for i_ti, tr_branch in enumerate(self.tracking_info):
                         if isinstance(tr_branch, str):
                             dtype = tracking[-1].dtype
@@ -200,11 +202,11 @@ class RootDataset(DGLDataset):
             tracking = torch.stack(tracking)
             globals = torch.stack(globals)
 
-            self.graph_chunks.append(graphs)
-            self.label_chunks.append(labels)
-            self.tracking_chunks.append(tracking)
-            self.global_chunks.append(globals)
-            self.counts.append(len(graphs))
+            # self.graph_chunks.append(graphs)
+            # self.label_chunks.append(labels)
+            # self.tracking_chunks.append(tracking)
+            # self.global_chunks.append(globals)
+            # self.counts.append(len(graphs))
             
             if (self.chunks > 1):
                 self.save_chunk(chunk_id, graphs, labels, tracking, globals)
@@ -469,8 +471,8 @@ class MultiLabelDataset(EdgeDataset):
                 if passed:
                     graphs.append(self.make_graph(self.chain))
                     labels.append(self.get_label(self.chain))
-                    tracking.append(torch.zeros(len(self.tracking_info), dtype=torch.double))
-                    globals.append(torch.zeros(len(self.global_features)))
+                    tracking.append(torch.zeros(len(self.tracking_info), dtype=FEATURE_DTYPE))
+                    globals.append(torch.zeros(len(self.global_features), dtype=FEATURE_DTYPE))
                     for i_ti, tr_branch in enumerate(self.tracking_info):
                         if isinstance(tr_branch, str):
                             tracking[-1][i_ti] = getattr(self.chain, tr_branch)
