@@ -3,6 +3,18 @@ license: mit
 tags: 
 - arXiv:2412.10665
 ---
+
+This is a demo is of the approach described in the paper, ["Pretrained Event Classification Model for High Energy Physics Analysis"](https://arxiv.org/abs/2412.10665)
+```
+@misc{ho2024pretrained,
+  title={Pretrained Event Classification Model for High Energy Physics Analysis},
+  author={Joshua Ho, Benjamin Ryan Roberts, Shuo Han, Haichen Wang},
+  year={2024},
+  eprint={2412.10665},
+  archivePrefix={arXiv}
+}
+```
+
 ## Abstract
 
 We introduce a foundation model for event classification in high-energy physics, built on a **Graph Neural Network** architecture and trained on **120 million simulated proton-proton collision events** spanning 12 distinct physics processes. The model is *pretrained* to learn a general and robust representation of collision data using challenging multiclass and multilabel classification tasks.
