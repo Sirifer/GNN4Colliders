@@ -39,10 +39,17 @@ def call_bash_script(config, dataset_key, shuffle_chunks, bash_script):
         print(f"Executing command: {command}")  # Debugging: Print the command being executed
 
         # Run the command
-        result = subprocess.run(command, shell=True, check=True)
+        result = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, end="")
         return f"Success: {dataset_key}"
     except subprocess.CalledProcessError as e:
-        return f"Error executing bash script for dataset {dataset_key}: {e.stderr.decode()}"
+        stderr = e.stderr if isinstance(e.stderr, str) else (e.stderr.decode() if e.stderr else "")
+        stdout = e.stdout if isinstance(e.stdout, str) else (e.stdout.decode() if e.stdout else "")
+        message = f"Error executing bash script for dataset {dataset_key}: {stderr or stdout or str(e)}"
+        return message
 
 def process_yaml_file(config, base_directory, bash_script):
     """
@@ -76,13 +83,8 @@ def main():
     # List of YAML configuration files (relative to the base directory)
     configs = [
         # "configs/stats_100K/pretraining_multiclass.yaml",
-        # "configs/stats_100K/ttH_CP_even_vs_odd.yaml",
+        "configs/stats_100K/ttH_CP_even_vs_odd.yaml",
         # "configs/stats_all/pretraining_multiclass.yaml",
-        # "configs/stats_all/ttH_CP_even_vs_odd.yaml",
-        # "configs/attention/ttH_CP_even_vs_odd.yaml",
-        "configs/stats_all/ttH_CP_even_vs_odd_batch_size_2048.yaml",
-        "configs/stats_all/ttH_CP_even_vs_odd_batch_size_4096.yaml",
-        "configs/stats_all/ttH_CP_even_vs_odd_batch_size_8192.yaml",
     ]
 
     # Path to the bash script to be called

@@ -43,6 +43,9 @@ Datasets:
         - NODE_TYPE
       node_branch_types: [vector, vector, vector, vector, single]
       node_feature_scales: [1e-1, 1, 1, 1e-1, 1, 1, 1]
+    selections:
+      - "N_jet >= 5"
+      - "(123 < higgs_m) & (higgs_m < 127)"
     folding:
       n_folds: 4
       test: [0]

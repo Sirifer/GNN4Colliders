@@ -7,6 +7,7 @@ import os
 import glob
 import time
 import numpy as np
+import re
 from root_gnn_base import utils
 
 FEATURE_DTYPE = torch.float32
@@ -57,14 +58,37 @@ def full_connected_graph(n_nodes, self_loops=True):
         receivers = receivers[mask]
     return dgl.graph((senders, receivers))
 
+def _selection_context(ch):
+    if isinstance(ch, dict):
+        return ch
+    if hasattr(ch, 'GetListOfBranches'):
+        context = {}
+        for branch in ch.GetListOfBranches():
+            branch_name = branch.GetName()
+            try:
+                context[branch_name] = getattr(ch, branch_name)
+            except Exception:
+                continue
+        return context
+    return vars(ch)
+
 def check_selection(ch, selection):
+    if isinstance(selection, str):
+        return bool(eval(selection, {"__builtins__": {}}, _selection_context(ch)))
     var, cut, op = selection
     if op == '>':
         return ch[var] > cut
+    elif op == '>=':
+        return ch[var] >= cut
     elif op == '<':
         return ch[var] < cut
+    elif op == '<=':
+        return ch[var] <= cut
     elif op == '==':
         return ch[var] == cut
+    elif op == '!=':
+        return ch[var] != cut
+    raise ValueError(f'Unknown selection operator: {op}')
 
 def check_selections(ch, selections):
     for selection in selections:
@@ -72,10 +96,74 @@ def check_selections(ch, selections):
             return False
     return True
 
+def selection_branches(selection):
+    if isinstance(selection, str):
+        tokens = re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", selection)
+        keywords = {"and", "or", "not", "True", "False"}
+        return [tok for tok in tokens if tok not in keywords]
+    if isinstance(selection, (list, tuple)) and len(selection) > 0:
+        return [selection[0]]
+    return []
+
+def init_cutflow(selections):
+    return {"selections": list(selections), "counts": [0] * len(selections), "total": 0}
+
+def update_cutflow(cutflow, ch):
+    cutflow["total"] += 1
+    passed = True
+    for i, selection in enumerate(cutflow["selections"]):
+        if passed and check_selection(ch, selection):
+            cutflow["counts"][i] += 1
+        else:
+            passed = False
+
+def print_cutflow(cutflow, title="Cutflow"):
+    total = cutflow["total"]
+    print(f"\n{title}")
+    print(f"{'Step':<6} {'Label':<30} {'Yield':>12} {'Ind. Eff.':>12} {'Tot. Eff.':>12}")
+    prev = total
+    current = total
+    print(f"{0:<6} {'all events':<30} {total:>12} {1.0:>12.4f} {1.0:>12.4f}")
+    for i, (selection, count) in enumerate(zip(cutflow["selections"], cutflow["counts"]), start=1):
+        current = count
+        ind_eff = current / prev if prev else 0.0
+        tot_eff = current / total if total else 0.0
+        print(f"{i:<6} {str(selection):<30} {current:>12} {ind_eff:>12.4f} {tot_eff:>12.4f}")
+        prev = current
+
+def selection_mask(data, selections):
+    if len(selections) == 0:
+        first_field = data.fields[0] if len(data.fields) > 0 else None
+        return ak.ones_like(data[first_field], dtype=bool) if first_field is not None else None
+    mask = None
+    for selection in selections:
+        current_mask = eval(selection, {"__builtins__": {}}, data) if isinstance(selection, str) else check_selection(data, selection)
+        if mask is None:
+            mask = current_mask
+        else:
+            mask = mask & current_mask
+    return mask
+
+def compute_cutflow(data, selections):
+    cutflow = init_cutflow(selections)
+    first_field = data.fields[0] if len(data.fields) > 0 else None
+    cutflow["total"] = len(data[first_field]) if first_field is not None else 0
+    if first_field is None:
+        return cutflow
+    running_mask = ak.ones_like(data[first_field], dtype=bool)
+    for i, selection in enumerate(selections):
+        current_mask = eval(selection, {"__builtins__": {}}, data) if isinstance(selection, str) else check_selection(data, selection)
+        running_mask = running_mask & current_mask
+        cutflow["counts"][i] = int(ak.sum(running_mask))
+    return cutflow
+
 class RootDataset(DGLDataset):
     def __init__(self, name=None, raw_dir=None, save_dir=None, label=1, file_names = '*.root', node_branch_names=None, node_branch_types=None, node_feature_scales=None, 
                  selections=[], save=True, tree_name = 'nominal_Loose', fold_var = 'eventNumber', weight_var = None, chunks = 1, process_chunks = None, global_features = [], tracking_info = [], **kwargs):
-        print(f'Unused args while creating RootDataset: {kwargs}')
+        ignored_keys = {'shuffle_chunks', 'batch_size', 'padding_mode', 'folding'}
+        unused_kwargs = {k: v for k, v in kwargs.items() if k not in ignored_keys}
+        if len(unused_kwargs) > 0:
+            print(f'Unused args while creating RootDataset: {unused_kwargs}')
         self.label = label
         self.counts = []
         self.selections = selections
@@ -115,7 +203,7 @@ class RootDataset(DGLDataset):
             if isinstance(feat, str):
                 branches.append(feat)
         for selection in self.selections:
-            branches.append(selection[0])
+            branches.extend(selection_branches(selection))
         return list(set(branches))  # Remove duplicates
 
     def make_graph(self, ch):
@@ -150,16 +238,21 @@ class RootDataset(DGLDataset):
             print('No files found in {}'.format(os.path.join(self.raw_dir, self.file_names)))
             return
         data = ak.concatenate(arrays, axis=0)
-        n_entries = len(data[branches[0]])
+        sel_mask = selection_mask(data, self.selections)
+        selected_indices = np.arange(len(data[branches[0]]))
+        if sel_mask is not None:
+            selected_indices = selected_indices[ak.to_numpy(sel_mask)]
+        n_entries = len(selected_indices)
         newtime = time.time()
         times[0] += newtime - oldtime
-        chunks = np.array_split(np.arange(n_entries), self.chunks)
+        chunks = np.array_split(selected_indices, self.chunks)
         chunks = [chunk for i, chunk in enumerate(chunks) if i in self.process_chunks]
 
         self.graph_chunks = []
         self.label_chunks = []
         self.tracking_chunks = []
         self.global_chunks = []
+        cutflow = init_cutflow(self.selections)
         chunk_id = -1
         for chunk in chunks:
             print('Processing chunk {}/{}'.format(chunk_id + 1, len(chunks)), flush=True)
@@ -221,6 +314,9 @@ class RootDataset(DGLDataset):
     def save(self):
         if not self.save_to_disk:
             return
+        if self.chunks > 1 and (not hasattr(self, "graph_chunks") or len(self.graph_chunks) == 0):
+            print(f"Skipping save for {self.name}: no graphs were created.")
+            return
         graph_path = os.path.join(self.save_dir, self.name + '.bin')
         if self.chunks == 1:
             print(f'Saving dataset to {os.path.join(self.save_dir, self.name + ".bin")}')
@@ -233,6 +329,9 @@ class RootDataset(DGLDataset):
 
     def save_chunk(self, chunk_id, graphs, labels, tracking, globals):
         if not self.save_to_disk:
+            return
+        if len(graphs) == 0:
+            print(f"Skipping save for chunk {chunk_id}: no graphs passed selections.")
             return
         graph_path = os.path.join(self.save_dir, self.name + '.bin')
         print(f'Saving dataset to {os.path.join(self.save_dir, self.name + f"_{self.process_chunks[chunk_id]}.bin")}')
@@ -443,7 +542,17 @@ class MultiLabelDataset(EdgeDataset):
             self.chain.SetBranchStatus(branch, 1)
         newtime = time.time()
         times[0] += newtime - oldtime
-        chunks = np.array_split(np.arange(self.chain.GetEntries()), self.chunks)
+        all_indices = np.arange(self.chain.GetEntries())
+        branches = self.get_list_of_branches()
+        data = {branch: [] for branch in branches}
+        for ientry in all_indices:
+            self.chain.GetEntry(ientry)
+            for branch in branches:
+                data[branch].append(getattr(self.chain, branch))
+        data = {branch: ak.Array(values) for branch, values in data.items()}
+        sel_mask = selection_mask(data, self.selections)
+        selected_indices = all_indices[ak.to_numpy(sel_mask)] if sel_mask is not None else all_indices
+        chunks = np.array_split(selected_indices, self.chunks)
         chunks = [chunk for i, chunk in enumerate(chunks) if i in self.process_chunks]
         self.graph_chunks = []
         self.label_chunks = []
@@ -460,6 +569,7 @@ class MultiLabelDataset(EdgeDataset):
                 if (ientry % 10000 == 0):
                     print('Processing event {}/{}'.format(ientry, self.chain.GetEntries()), flush=True)
                 self.chain.GetEntry(ientry)
+                ch = {b: getattr(self.chain, b) for b in branches}
                 passed = True
                 for selection in self.selections:
                     if not check_selection(self.chain, selection):

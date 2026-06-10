@@ -106,6 +106,42 @@ IndexError: list index out of range
 
 To make sure you have all the necessary graphs to train, you can use the `scripts/check_dataset_files.py` script to ensure all graphs are properly processed. Using the `--rerun` runtime arguement will tell the script to automically re-processes any missing files.
 
+### Selections
+Dataset-level event selections are defined in the config file at the same level as `args:` and `folding:`. They are applied during data preparation before graphs are built, and they are also reported as a cutflow after processing.
+
+Example:
+```yaml
+Datasets:
+  ttH_CP_even:
+    module: root_gnn_base.dataset
+    class: LazyDataset
+    args:
+      name: ttH_CP_even
+      # ...
+    selections:
+      - "N_jet >= 5"
+      - "(123 < higgs_m) & (higgs_m < 127)"
+    folding:
+      n_folds: 4
+      test: [0]
+      train: [1, 2, 3]
+```
+
+Supported selection syntax:
+- Simple comparisons like `"N_jet >= 5"`, `"higgs_m < 200"`, or `"MET_met == 0"`
+- Multiple conditions combined with `&` and parentheses, for example `"(123 < higgs_m) & (higgs_m < 127)"`
+
+To quickly test that the selections in a config are valid and to print a fast cutflow for every dataset, run:
+```bash
+python scripts/selections.py --config configs/stats_100K/ttH_CP_even_vs_odd.yaml
+```
+
+This script reads only the branches needed for the selections and prints:
+- the status of each selection expression
+- the yield after each cut
+- the individual efficiency of each cut
+- the total efficiency relative to the uncut sample
+
 ## Training
 Training is run by `scripts/training_script`. `--preshuffle` tells it to use the preshuffled and batched graphs rather than shuffling and batching on the fly, and `--restart` can be used to force the training to start from the beginning rather than from the last available checkpoint.
 

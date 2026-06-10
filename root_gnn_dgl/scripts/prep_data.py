@@ -1,12 +1,60 @@
 import sys
 import os
+import glob
 file_path = os.getcwd()
 sys.path.append(file_path)
 
 import root_gnn_base.utils as utils
+from root_gnn_base.dataset import compute_cutflow, print_cutflow
+import uproot
+import awkward as ak
 import argparse
 from root_gnn_base.batched_dataset import PreBatchedDataset
 from root_gnn_base.batched_dataset import LazyPreBatchedDataset
+
+
+def print_dataset_cutflow(dset_config, dataset_name):
+    args = dset_config["args"]
+    raw_dir = args["raw_dir"]
+    file_names = args["file_names"]
+    tree_name = args.get("tree_name", "nominal_Loose")
+    selections = dset_config.get("selections", [])
+
+    files = []
+    if isinstance(file_names, str):
+        files = glob.glob(os.path.join(raw_dir, file_names))
+    else:
+        for file_name in file_names:
+            files.extend(glob.glob(os.path.join(raw_dir, file_name)))
+
+    branches = []
+    for feat in args.get("node_branch_names", []):
+        if isinstance(feat, list):
+            for branch in feat:
+                if isinstance(branch, str) and branch != "CALC_E":
+                    branches.append(branch)
+    for feat in args.get("global_features", []):
+        if isinstance(feat, str):
+            branches.append(feat)
+    for feat in args.get("tracking_info", []):
+        if isinstance(feat, str):
+            branches.append(feat)
+    from root_gnn_base.dataset import selection_branches
+    for selection in selections:
+        branches.extend(selection_branches(selection))
+    branches = sorted(set(branches))
+
+    arrays = []
+    for file in files:
+        with uproot.open(file) as f:
+            arrays.append(f[tree_name].arrays(branches, library="ak"))
+    if not arrays:
+        print(f"No files found for dataset {dataset_name} in {os.path.join(raw_dir, str(file_names))}")
+        return
+
+    data = ak.concatenate(arrays, axis=0)
+    cutflow = compute_cutflow(data, selections)
+    print_cutflow(cutflow, title=f"Cutflow for {dataset_name}")
 
 def main():
     parser = argparse.ArgumentParser()
@@ -20,6 +68,7 @@ def main():
 
     config = utils.load_config(args.config)
     dset_config = config['Datasets'][args.dataset]
+    print_dataset_cutflow(dset_config, args.dataset)
     batch_size = config['Training']['batch_size']
     if not args.shuffle_mode:
         dset = utils.buildFromConfig(dset_config, {'process_chunks': [args.chunk,]})

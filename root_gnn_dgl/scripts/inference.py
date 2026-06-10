@@ -5,6 +5,8 @@ import os
 import argparse
 import yaml
 import gc
+from array import array
+import fnmatch
 
 import torch
 import dgl
@@ -83,6 +85,49 @@ def load_config(config_file):
     include_config(conf)
     return conf
 
+def compute_selection_pass(tree, selections):
+    context = {}
+    for branch in tree.GetListOfBranches():
+        branch_name = branch.GetName()
+        try:
+            context[branch_name] = getattr(tree, branch_name)
+        except Exception:
+            continue
+    for selection in selections:
+        if isinstance(selection, str):
+            if not bool(eval(selection, {"__builtins__": {}}, context)):
+                return 0
+        else:
+            var, cut, op = selection
+            if op == '>':
+                passed = context[var] > cut
+            elif op == '>=':
+                passed = context[var] >= cut
+            elif op == '<':
+                passed = context[var] < cut
+            elif op == '<=':
+                passed = context[var] <= cut
+            elif op == '==':
+                passed = context[var] == cut
+            elif op == '!=':
+                passed = context[var] != cut
+            else:
+                raise ValueError(f'Unknown selection operator: {op}')
+            if not passed:
+                return 0
+    return 1
+
+def select_dataset_config(configs, target_path):
+    target_name = os.path.basename(target_path)
+    for config in configs:
+        dset_config = config['Datasets'][list(config['Datasets'].keys())[0]]
+        file_names = dset_config['args'].get('file_names', '')
+        patterns = file_names if isinstance(file_names, list) else [file_names]
+        for pattern in patterns:
+            if fnmatch.fnmatch(target_name, os.path.basename(pattern)):
+                return dset_config
+    return configs[0]['Datasets'][list(configs[0]['Datasets'].keys())[0]]
+
 def main():
 
     parser = argparse.ArgumentParser()
@@ -144,7 +189,7 @@ def main():
     print('Imports finished in {:.2f} seconds'.format(end - start))
 
     start = time.time()
-    dset_config = config['Datasets'][list(config['Datasets'].keys())[0]]
+    dset_config = select_dataset_config([load_config(c) for c in args.config], args.target)
     if dset_config['class'] == 'LazyDataset':
         dset_config['class'] = 'EdgeDataset'
     elif dset_config['class'] == 'LazyMultiLabelDataset':
@@ -250,9 +295,11 @@ def main():
 
     if args.write:
         from ROOT import std
+        write_config = select_dataset_config([load_config(c) for c in args.config], args.target)
         # Open the original ROOT file
         infile = ROOT.TFile.Open(args.target)
-        tree = infile.Get(dset_config['args']['tree_name'])
+        tree = infile.Get(write_config['args']['tree_name'])
+        selections = write_config.get('selections', [])
 
         # Create the destination directory if it doesn't exist
         os.makedirs(os.path.split(args.destination)[0], exist_ok=True)
@@ -275,9 +322,13 @@ def main():
                 branch_vectors[branch] = array('f', [0])
                 outtree.Branch(branch, branch_vectors[branch], f'{branch}/F')
 
+        selection_pass = array('i', [1])
+        outtree.Branch('selection_pass', selection_pass, 'selection_pass/I')
+
         # Fill the tree
         for i in range(tree.GetEntries()):
             tree.GetEntry(i)
+            selection_pass[0] = compute_selection_pass(tree, selections)
 
             for branch, scores in all_scores.items():
                 branch_data = branch_vectors[branch]
@@ -293,7 +344,7 @@ def main():
         # Write the modified tree to the new file
         print(f'Writing to file {args.destination}')
         print(f'Input entries: {tree.GetEntries()}, Output entries: {outtree.GetEntries()}')
-        print(f'Wrote scores to {args.branch_name}')
+        print(f'Wrote scores to {args.branch_name} and selection_pass')
         outtree.Write()
         outfile.Close()
         infile.Close()
