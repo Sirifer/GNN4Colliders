@@ -1,0 +1,319 @@
+Datasets:
+  SingleT_schan:
+    args:
+      buffer_size: 11
+      chunks: 100
+      file_names: SingleT_schan.root
+      fold_var: Number
+      label: 8
+      name: SingleT_schan
+      node_branch_names: &id001
+      - - jet_pt
+        - ele_pt
+        - mu_pt
+        - ph_pt
+        - MET_met
+      - - jet_eta
+        - ele_eta
+        - mu_eta
+        - ph_eta
+        - 0
+      - - jet_phi
+        - ele_phi
+        - mu_phi
+        - ph_phi
+        - MET_phi
+      - CALC_E
+      - - jet_btag
+        - 0
+        - 0
+        - 0
+        - 0
+      - - 0
+        - ele_charge
+        - mu_charge
+        - 0
+        - 0
+      - NODE_TYPE
+      node_branch_types: &id002
+      - vector
+      - vector
+      - vector
+      - vector
+      - single
+      node_feature_scales: &id003
+      - 1e-1
+      - 1
+      - 1
+      - 1e-1
+      - 1
+      - 1
+      - 1
+      raw_dir: /global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/data/ntuples/Hyy_pretraining/
+      save_dir: /pscratch/sd/j/joshuaho/root_gnn/root_gnn_dgl/data/processed_pretraining_multiclass_12_process/
+      tree_name: output
+      weight_var: weight
+    class: LazyDataset
+    folding: &id004
+      n_folds: 10
+      test:
+      - 0
+      - 1
+      train:
+      - 2
+      - 3
+      - 4
+      - 5
+      - 6
+      - 7
+      - 8
+      - 9
+    module: root_gnn_base.dataset
+    padding_mode: NONE
+    shuffle_chunks: 10
+  VBF:
+    args:
+      buffer_size: 11
+      chunks: 100
+      file_names: VBF_NLO_inc.root
+      fold_var: Number
+      label: 3
+      name: VBF
+      node_branch_names: *id001
+      node_branch_types: *id002
+      node_feature_scales: *id003
+      raw_dir: /global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/data/ntuples/Hyy_pretraining/
+      save_dir: /pscratch/sd/j/joshuaho/root_gnn/root_gnn_dgl/data/processed_pretraining_multiclass_12_process/
+      tree_name: output
+      weight_var: weight
+    class: LazyDataset
+    folding: *id004
+    module: root_gnn_base.dataset
+    padding_mode: NONE
+    shuffle_chunks: 10
+  WH:
+    args:
+      buffer_size: 11
+      chunks: 100
+      file_names: WH_NLO_inc.root
+      fold_var: Number
+      label: 4
+      name: WH
+      node_branch_names: *id001
+      node_branch_types: *id002
+      node_feature_scales: *id003
+      raw_dir: /global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/data/ntuples/Hyy_pretraining/
+      save_dir: /pscratch/sd/j/joshuaho/root_gnn/root_gnn_dgl/data/processed_pretraining_multiclass_12_process/
+      tree_name: output
+      weight_var: weight
+    class: LazyDataset
+    folding: *id004
+    module: root_gnn_base.dataset
+    padding_mode: NONE
+    shuffle_chunks: 10
+  ZH:
+    args:
+      buffer_size: 11
+      chunks: 100
+      file_names: ZH_NLO_inc.root
+      fold_var: Number
+      label: 5
+      name: ZH
+      node_branch_names: *id001
+      node_branch_types: *id002
+      node_feature_scales: *id003
+      raw_dir: /global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/data/ntuples/Hyy_pretraining/
+      save_dir: /pscratch/sd/j/joshuaho/root_gnn/root_gnn_dgl/data/processed_pretraining_multiclass_12_process/
+      tree_name: output
+      weight_var: weight
+    class: LazyDataset
+    folding: *id004
+    module: root_gnn_base.dataset
+    padding_mode: NONE
+    shuffle_chunks: 10
+  ggF:
+    args:
+      buffer_size: 11
+      chunks: 100
+      file_names: ggF_NLO_inc.root
+      fold_var: Number
+      label: 2
+      name: ggF
+      node_branch_names: *id001
+      node_branch_types: *id002
+      node_feature_scales: *id003
+      raw_dir: /global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/data/ntuples/Hyy_pretraining/
+      save_dir: /pscratch/sd/j/joshuaho/root_gnn/root_gnn_dgl/data/processed_pretraining_multiclass_12_process/
+      tree_name: output
+      weight_var: weight
+    class: LazyDataset
+    folding: *id004
+    module: root_gnn_base.dataset
+    padding_mode: NONE
+    shuffle_chunks: 10
+  tHjb:
+    args:
+      buffer_size: 11
+      chunks: 100
+      file_names: tHjb_NLO_inc.root
+      fold_var: Number
+      label: 1
+      name: tHjb
+      node_branch_names: *id001
+      node_branch_types: *id002
+      node_feature_scales: *id003
+      raw_dir: /global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/data/ntuples/Hyy_pretraining/
+      save_dir: /pscratch/sd/j/joshuaho/root_gnn/root_gnn_dgl/data/processed_pretraining_multiclass_12_process/
+      tree_name: output
+      weight_var: weight
+    class: LazyDataset
+    folding: *id004
+    module: root_gnn_base.dataset
+    padding_mode: NONE
+    shuffle_chunks: 10
+  ttH:
+    args:
+      buffer_size: 11
+      chunks: 100
+      file_names: ttH_NLO_inc.root
+      fold_var: Number
+      label: 0
+      name: ttH
+      node_branch_names: *id001
+      node_branch_types: *id002
+      node_feature_scales: *id003
+      raw_dir: /global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/data/ntuples/Hyy_pretraining/
+      save_dir: /pscratch/sd/j/joshuaho/root_gnn/root_gnn_dgl/data/processed_pretraining_multiclass_12_process/
+      tree_name: output
+      weight_var: weight
+    class: LazyDataset
+    folding: *id004
+    module: root_gnn_base.dataset
+    padding_mode: NONE
+    shuffle_chunks: 10
+  ttW:
+    args:
+      buffer_size: 11
+      chunks: 100
+      file_names: ttW.root
+      fold_var: Number
+      label: 10
+      name: ttW
+      node_branch_names: *id001
+      node_branch_types: *id002
+      node_feature_scales: *id003
+      raw_dir: /global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/data/ntuples/Hyy_pretraining/
+      save_dir: /pscratch/sd/j/joshuaho/root_gnn/root_gnn_dgl/data/processed_pretraining_multiclass_12_process/
+      tree_name: output
+      weight_var: weight
+    class: LazyDataset
+    folding: *id004
+    module: root_gnn_base.dataset
+    padding_mode: NONE
+    shuffle_chunks: 10
+  ttbar:
+    args:
+      buffer_size: 11
+      chunks: 100
+      file_names: ttbar.root
+      fold_var: Number
+      label: 9
+      name: ttbar
+      node_branch_names: *id001
+      node_branch_types: *id002
+      node_feature_scales: *id003
+      raw_dir: /global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/data/ntuples/Hyy_pretraining/
+      save_dir: /pscratch/sd/j/joshuaho/root_gnn/root_gnn_dgl/data/processed_pretraining_multiclass_12_process/
+      tree_name: output
+      weight_var: weight
+    class: LazyDataset
+    folding: *id004
+    module: root_gnn_base.dataset
+    padding_mode: NONE
+    shuffle_chunks: 10
+  ttt:
+    args:
+      buffer_size: 11
+      chunks: 100
+      file_names: ttt.root
+      fold_var: Number
+      label: 11
+      name: ttt
+      node_branch_names: *id001
+      node_branch_types: *id002
+      node_feature_scales: *id003
+      raw_dir: /global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/data/ntuples/Hyy_pretraining/
+      save_dir: /pscratch/sd/j/joshuaho/root_gnn/root_gnn_dgl/data/processed_pretraining_multiclass_12_process/
+      tree_name: output
+      weight_var: weight
+    class: LazyDataset
+    folding: *id004
+    module: root_gnn_base.dataset
+    padding_mode: NONE
+    shuffle_chunks: 10
+  tttt:
+    args:
+      buffer_size: 11
+      chunks: 100
+      file_names: tttt.root
+      fold_var: Number
+      label: 7
+      name: tttt
+      node_branch_names: *id001
+      node_branch_types: *id002
+      node_feature_scales: *id003
+      raw_dir: /global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/data/ntuples/Hyy_pretraining/
+      save_dir: /pscratch/sd/j/joshuaho/root_gnn/root_gnn_dgl/data/processed_pretraining_multiclass_12_process/
+      tree_name: output
+      weight_var: weight
+    class: LazyDataset
+    folding: *id004
+    module: root_gnn_base.dataset
+    padding_mode: NONE
+    shuffle_chunks: 10
+  ttyy:
+    args:
+      buffer_size: 11
+      chunks: 100
+      file_names: ttyy.root
+      fold_var: Number
+      label: 6
+      name: ttyy_ch
+      node_branch_names: *id001
+      node_branch_types: *id002
+      node_feature_scales: *id003
+      raw_dir: /global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/data/ntuples/Hyy_pretraining/
+      save_dir: /pscratch/sd/j/joshuaho/root_gnn/root_gnn_dgl/data/processed_pretraining_multiclass_12_process/
+      tree_name: output
+      weight_var: weight
+    class: LazyDataset
+    folding: *id004
+    module: root_gnn_base.dataset
+    padding_mode: NONE
+    shuffle_chunks: 10
+Loss:
+  args: {}
+  class: CrossEntropyLoss
+  finish:
+    args:
+      dim: 1
+    class: Softmax
+    module: torch.nn
+  module: torch.nn
+Model:
+  args:
+    dropout: 0
+    hid_size: 64
+    in_size: 7
+    n_layers: 4
+    n_proc_steps: 4
+    out_size: 12
+  class: Edge_Network
+  module: models.GCN
+Training:
+  batch_size: 1024
+  epochs: 100
+  gamma: 0.99
+  learning_rate: 0.0001
+Training_Directory: trainings/pretraining_multiclass/multiclass_12_process/
+Training_Name: multiclass_12_process
