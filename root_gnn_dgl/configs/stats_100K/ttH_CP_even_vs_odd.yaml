@@ -32,7 +32,7 @@ Datasets:
       tree_name: output
       fold_var: Number
       raw_dir: /global/cfs/projectdirs/atlas/joshua/gnn_data/stats_100K/
-      save_dir: /global/cfs/projectdirs/atlas/joshua/gnn_data/processed_graphs/stats_100K/ttH_CP_even_vs_odd/
+      save_dir: /pscratch/sd/j/joshuaho/gnn/stats_100K/ttH_CP_even_vs_odd/
       node_branch_names:
         - [jet_pt, ele_pt, mu_pt, ph_pt, MET_met]
         - [jet_eta, ele_eta, mu_eta, ph_eta, 0]
