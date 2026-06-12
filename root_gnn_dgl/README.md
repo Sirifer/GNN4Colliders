@@ -169,6 +169,55 @@ python scripts/inference.py \
 
 You can also input a list as the `--config` and the `--branch_name` to simultaneously apply multiple models onto the same set of samples. An example on how to do this in shell script is in the `run_demo.sh` file.
 
+## ONNX Export
+The `scripts/onnx_export.py` script exports a trained model to ONNX and validates the exported model against PyTorch on a real batch from the processed dataset.
+
+Example:
+```bash
+python scripts/onnx_export.py --config configs/stats_100K/ttH_CP_even_vs_odd.yaml --name ttH.onnx
+```
+
+To export a specific checkpoint instead of the best `Test_AUC` epoch, pass `--epoch`:
+```bash
+python scripts/onnx_export.py --config configs/stats_100K/ttH_CP_even_vs_odd.yaml --name ttH_epoch68.onnx --epoch 68
+```
+
+What it does:
+- Reads the model definition from the provided config
+- Automatically chooses the matching model class from the config, including the finetuning or from-scratch path
+- Loads the first prebatched chunk from the dataset save directory
+- Uses the graph node count per event as `global_features`
+- Exports an ONNX model with inputs in this order:
+  1. `node_features`
+  2. `edge_features`
+  3. `global_features`
+  4. `edge_index`
+  5. `node_batch`
+- Checks the ONNX graph with `onnx.checker`
+- Runs ONNX Runtime and compares the output to PyTorch
+
+If `--epoch` is omitted, the script loads the checkpoint from the best `Test_AUC` entry in `training.log`, which matches the previous behavior.
+
+The validation is a three-way comparison:
+1. The original DGL model from training
+2. The tensor-based PyTorch translation of the same GNN
+3. The exported ONNX model
+
+The script compares both logits and final sigmoid scores across all three models. It also produces a diagnostic plot showing:
+- score distributions for the DGL, tensor, and ONNX models
+- residual distributions for tensor - DGL and ONNX - DGL
+
+The plot is saved automatically next to the ONNX file using the same stem, with `_onnx.png` appended.
+
+Input shapes follow the notebook convention:
+- `node_features`: `[num_nodes, node_feature_dim]`
+- `edge_features`: `[num_edges, edge_feature_dim]`
+- `global_features`: `[batch_size, 1]`
+- `edge_index`: `[2, num_edges]`
+- `node_batch`: `[num_nodes]`
+
+The validation prints the max and mean absolute differences for both logits and sigmoid probabilities. For a healthy export, those differences should be very small, typically around `1e-5` or better for logits.
+
 ## Running Jobs + Parallelization
 
 Perlmutter job scripts are located in `jobs/`. Job scripts are separated into 3 categories: `prep_data`, `training`, and `inference`. 

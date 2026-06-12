@@ -4,7 +4,7 @@ Model:
   module: models.GCN
   class: Transferred_Learning_Finetuning
   args:
-    pretraining_path: trainings/stats_100K/pretraining_multiclass/model_epoch_100.pt # update to the last epoch of the pretraining
+    pretraining_path: Pretrained_GNN/multiclass_pretrained_model_12/model_epoch_71.pt
     pretraining_model:
       module: models.GCN
       class: Edge_Network
