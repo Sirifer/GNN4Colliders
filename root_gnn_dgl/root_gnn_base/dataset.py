@@ -160,7 +160,7 @@ def compute_cutflow(data, selections):
 class RootDataset(DGLDataset):
     def __init__(self, name=None, raw_dir=None, save_dir=None, label=1, file_names = '*.root', node_branch_names=None, node_branch_types=None, node_feature_scales=None, 
                  selections=[], save=True, tree_name = 'nominal_Loose', fold_var = 'eventNumber', weight_var = None, chunks = 1, process_chunks = None, global_features = [], tracking_info = [], **kwargs):
-        ignored_keys = {'shuffle_chunks', 'batch_size', 'padding_mode', 'folding'}
+        ignored_keys = {'shuffle_chunks', 'shuffle_seed', 'batch_size', 'padding_mode', 'folding'}
         unused_kwargs = {k: v for k, v in kwargs.items() if k not in ignored_keys}
         if len(unused_kwargs) > 0:
             print(f'Unused args while creating RootDataset: {unused_kwargs}')

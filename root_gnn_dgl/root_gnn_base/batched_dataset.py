@@ -14,9 +14,25 @@ def GetBatchedLoader(dataset, batch_size, mask_fn = None, drop_last=True, **kwar
     dloader = GraphDataLoader(dataset, sampler=SubsetRandomSampler(torch.arange(len(dataset))[mask_fn(dataset)]), batch_size=batch_size, drop_last=drop_last, num_workers = 0)
     return dloader
 
+class FixedOrderSampler:
+    def __init__(self, indices):
+        self.indices = indices
+
+    def __iter__(self):
+        return iter(self.indices.tolist())
+
+    def __len__(self):
+        return len(self.indices)
+
+def hash_partition(indices, chunks, seed):
+    if chunks <= 1:
+        return torch.zeros(len(indices), dtype=torch.long)
+    hashed = (indices * 1103515245 + int(seed)) % 2147483647
+    return hashed % chunks
+
 #Dataset which contains prebatched shuffled graphs. Cannot be saved to disk, else batching info is lost.
 class PreBatchedDataset(DGLDataset):
-    def __init__(self, start_dataset, batch_size, mask_fn = None, drop_last=True, save_to_disk = True, suffix = '', chunks = 1, chunkno = -1, shuffle = True, padding_mode = 'NONE', hidden_size=64, **kwargs):
+    def __init__(self, start_dataset, batch_size, mask_fn = None, drop_last=True, save_to_disk = True, suffix = '', chunks = 1, chunkno = -1, shuffle = True, padding_mode = 'NONE', hidden_size=64, shuffle_seed=12345, **kwargs):
         print(f'Unused kwargs: {kwargs}')
         self.start_dataset = start_dataset
         self.start_dataset.load()
@@ -25,12 +41,15 @@ class PreBatchedDataset(DGLDataset):
         self.chunks = chunks
         self.chunkno = chunkno
         self.mask_fn = mask_fn
+        if self.mask_fn == None:
+            self.mask_fn = lambda x: torch.ones(len(x), dtype=torch.bool)
         self.drop_last = drop_last
         self.graphs = []
         self.label = []
         self.padding_mode = padding_mode
         self.save_to_disk = save_to_disk
         self.shuffle = shuffle
+        self.shuffle_seed = shuffle_seed
         self.suffix = suffix
         self.current_chunk = None
         self.current_chunk_idx = -1
@@ -38,16 +57,16 @@ class PreBatchedDataset(DGLDataset):
         super().__init__(name = start_dataset.name + '_prebatched_padded', save_dir=start_dataset.save_dir)
 
     def process(self):
-        first = 0
-        last = len(self.start_dataset)
-        if self.chunks > 1 and self.chunkno >= 0:
-            first = int(self.chunkno / self.chunks * len(self.start_dataset))
-            last = int((self.chunkno + 1) / self.chunks * len(self.start_dataset))
-        print(f'Processing chunk {self.chunkno} of {self.chunks} from {first} to {last} of {len(self.start_dataset)}')
-        mask = torch.logical_and(torch.logical_and(self.mask_fn(self.start_dataset), torch.arange(len(self.start_dataset)) >= first), torch.arange(len(self.start_dataset)) < last)
+        dataset_indices = torch.arange(len(self.start_dataset))
+        fold_indices = dataset_indices[self.mask_fn(self.start_dataset)]
         if self.shuffle:
-            dloader = GraphDataLoader(self.start_dataset, sampler=SubsetRandomSampler(torch.arange(len(self.start_dataset))[mask]), batch_size=self.batch_size, drop_last=self.drop_last)
+            if self.chunks > 1 and self.chunkno >= 0:
+                partitions = hash_partition(fold_indices, self.chunks, self.shuffle_seed)
+                fold_indices = fold_indices[partitions == self.chunkno]
+            print(f'Processing shuffled chunk {self.chunkno} of {self.chunks} with {len(fold_indices)} events from {len(self.start_dataset)} total')
+            dloader = GraphDataLoader(self.start_dataset, sampler=FixedOrderSampler(fold_indices), batch_size=self.batch_size, drop_last=self.drop_last)
         else: #Only don't shuffle if we're doing inference. Then we want all of the events anyways?
+            print(f'Processing sequential dataset with {len(self.start_dataset)} events')
             dloader = GraphDataLoader(self.start_dataset, sampler=SequentialSampler(self.start_dataset), batch_size=self.batch_size, drop_last=self.drop_last)
         self.graphs = []
         self.labels = []
@@ -69,6 +88,15 @@ class PreBatchedDataset(DGLDataset):
             self.globals.append(global_feat)
         load_batch_end = time.time()
         print(f'Loaded {len(self.graphs)} batches in {load_batch_end - load_batch_start} seconds')
+        if self.shuffle and len(self.graphs) > 1:
+            generator = torch.Generator()
+            generator.manual_seed(self.shuffle_seed + 7919 * max(self.chunkno, 0))
+            batch_order = torch.randperm(len(self.graphs), generator=generator).tolist()
+            self.graphs = [self.graphs[i] for i in batch_order]
+            self.labels = [self.labels[i] for i in batch_order]
+            self.tracking = [self.tracking[i] for i in batch_order]
+            self.globals = [self.globals[i] for i in batch_order]
+            print(f'Shuffled {len(self.graphs)} prebatched batches before padding')
         if self.padding_mode == 'STEPS':
             pad_node, pad_edge = utils.pad_size(self.batch_size, max_edges, max_nodes)
         elif self.padding_mode == 'FIXED':
