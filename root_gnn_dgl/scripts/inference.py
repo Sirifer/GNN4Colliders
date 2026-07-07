@@ -7,6 +7,7 @@ import yaml
 import gc
 from array import array
 import fnmatch
+import re
 
 import torch
 import dgl
@@ -85,36 +86,65 @@ def load_config(config_file):
     include_config(conf)
     return conf
 
+def _branch_names(tree):
+    return {branch.GetName() for branch in tree.GetListOfBranches()}
+
+def _compare(value, cut, op):
+    if op == '>':
+        return value > cut
+    if op == '>=':
+        return value >= cut
+    if op == '<':
+        return value < cut
+    if op == '<=':
+        return value <= cut
+    if op == '==':
+        return value == cut
+    if op == '!=':
+        return value != cut
+    raise ValueError(f'Unknown selection operator: {op}')
+
 def compute_selection_pass(tree, selections):
-    context = {}
-    for branch in tree.GetListOfBranches():
-        branch_name = branch.GetName()
-        try:
-            context[branch_name] = getattr(tree, branch_name)
-        except Exception:
-            continue
+    if not selections:
+        return 1
+
+    names = _branch_names(tree)
+
     for selection in selections:
         if isinstance(selection, str):
-            if not bool(eval(selection, {"__builtins__": {}}, context)):
-                return 0
-        else:
-            var, cut, op = selection
-            if op == '>':
-                passed = context[var] > cut
-            elif op == '>=':
-                passed = context[var] >= cut
-            elif op == '<':
-                passed = context[var] < cut
-            elif op == '<=':
-                passed = context[var] <= cut
-            elif op == '==':
-                passed = context[var] == cut
-            elif op == '!=':
-                passed = context[var] != cut
-            else:
-                raise ValueError(f'Unknown selection operator: {op}')
+            tokens = set(re.findall(r'\b[A-Za-z_]\w*\b', selection))
+            needed = tokens & names
+
+            context = {}
+            for name in needed:
+                context[name] = getattr(tree, name)
+
+            try:
+                passed = bool(eval(selection, {"__builtins__": {}}, context))
+            except NameError as exc:
+                raise NameError(
+                    f"Selection expression references an unknown name: {selection}"
+                ) from exc
+
             if not passed:
                 return 0
+        else:
+            if not isinstance(selection, (tuple, list)) or len(selection) != 3:
+                raise ValueError(
+                    f"Selection must be a string or a 3-item sequence "
+                    f"(var, cut, op), got: {selection}"
+                )
+
+            var, cut, op = selection
+
+            if var not in names:
+                raise KeyError(f"Selection references missing branch: {var}")
+
+            value = getattr(tree, var)
+
+            if not _compare(value, cut, op):
+                return 0
+
     return 1
 
 def select_dataset_config(configs, target_path):
