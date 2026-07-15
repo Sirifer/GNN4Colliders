@@ -134,7 +134,7 @@ def print_cutflow(cutflow, title="Cutflow"):
 def selection_mask(data, selections):
     if len(selections) == 0:
         first_field = data.fields[0] if len(data.fields) > 0 else None
-        return ak.ones_like(data[first_field], dtype=bool) if first_field is not None else None
+        return np.ones(len(data[first_field]), dtype=bool) if first_field is not None else None
     mask = None
     for selection in selections:
         current_mask = eval(selection, {"__builtins__": {}}, data) if isinstance(selection, str) else check_selection(data, selection)
@@ -150,7 +150,7 @@ def compute_cutflow(data, selections):
     cutflow["total"] = len(data[first_field]) if first_field is not None else 0
     if first_field is None:
         return cutflow
-    running_mask = ak.ones_like(data[first_field], dtype=bool)
+    running_mask = np.ones(cutflow["total"], dtype=bool)
     for i, selection in enumerate(selections):
         current_mask = eval(selection, {"__builtins__": {}}, data) if isinstance(selection, str) else check_selection(data, selection)
         running_mask = running_mask & current_mask
