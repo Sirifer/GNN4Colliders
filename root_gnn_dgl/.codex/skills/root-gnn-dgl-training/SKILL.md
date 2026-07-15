@@ -32,6 +32,32 @@ This matches the README, `run_demo.sh`, and the podman job wrappers.
 - `--directory <suffix>` appends a suffix to `Training_Directory`.
 - `--cpu`, `--multigpu`, `--multinode`, `--statistics`, `--seed`, and `--abs` are available when needed.
 
+## Run multiple local trainings
+
+Use the single-node launcher when queueing many config files on the current node:
+
+```bash
+python jobs/training/run_parallel_trainings.py <config-or-directory> --split <K/N>
+```
+
+Useful examples:
+
+```bash
+python jobs/training/run_parallel_trainings.py configs/run_3_ttH --split 2/2
+python jobs/training/run_parallel_trainings.py configs/run_3_ttH --split 2/2 --test
+```
+
+Launcher behavior:
+
+- Discovers `.yaml` files from each target directory, or accepts explicit config files.
+- Uses fixed local GPU slots `0,1,2,3` via `CUDA_VISIBLE_DEVICES`.
+- Runs `scripts/training_script.py --config <config> --preshuffle --nocompile --lazy`.
+- Forwards unknown args to `training_script.py`, such as `--restart` or `--seed 7`.
+- Rejects configs with duplicate `Training_Directory` values.
+- `--split K/N` selects configs by deterministic index modulo `N`; use `--split 1/2` and `--split 2/2` for two complementary halves.
+- `--test` prints the launch plan without starting training.
+- Logs go under `jobs/slurm/parallel_training_logs/<timestamp>/`.
+
 ## Submit on Perlmutter
 
 Prefer the podman path:
@@ -40,7 +66,14 @@ Prefer the podman path:
 sbatch jobs/training/podman/run_job.sh <config>
 ```
 
-The repo also ships `jobs/training/podman/submit.sh` for hard-coded sweeps and a conda-based Slurm path, but the podman wrapper is the more reliable default here.
+The job wrappers derive the repo root from their own location. `jobs/training/podman/submit.sh` and `jobs/training/conda/submit.sh` accept config paths as arguments; without arguments they run their built-in default sweeps. Set `SLURM_ACCOUNT` when the cluster requires an account:
+
+```bash
+SLURM_ACCOUNT=atlas sbatch jobs/training/podman/run_job.sh configs/run_3_ttH/scratch.yaml
+bash jobs/training/podman/submit.sh configs/run_3_ttH/scratch.yaml configs/run_3_ttH/finetuning.yaml
+```
+
+For the conda wrapper, set `ROOT_GNN_CONDA_ENV` if the environment is not named `dgl`.
 
 For distributed training, pass `--multinode` and launch under an environment that sets `RANK`, `LOCAL_RANK`, and `WORLD_SIZE`.
 

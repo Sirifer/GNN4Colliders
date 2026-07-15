@@ -49,6 +49,30 @@ bash jobs/prep_data/prep_data.sh <config> <dataset> <chunks> [extra_args]
 - Dataset configs can override training batch size during prebatching with a dataset-level `batch_size`.
 - The README says a `list index out of range` after graph saving is currently expected in some prep runs. Treat it as non-fatal if the output `.bin` files were written successfully.
 
+## Dataset selections
+
+Datasets may define event selections at the dataset level:
+
+```yaml
+Datasets:
+  signal:
+    args:
+      ...
+    selections:
+      - [n_jets, 4, ">="]
+      - "met_met_NOSYS > 30000"
+```
+
+Selection behavior:
+
+- Selections are applied during data prep before graph chunking.
+- `scripts/prep_data.py` prints a cutflow for each dataset before processing.
+- Tuple/list selections use `[branch, cut, op]`, where `op` can be `>`, `>=`, `<`, `<=`, `==`, or `!=`.
+- String selections are evaluated against loaded ROOT branches, so referenced branch names must exist.
+- Selection branches are added automatically to the branch list through `selection_branches()`.
+- Empty or omitted `selections` means all events pass.
+- If a selection references vector branches, verify the result is one boolean per event; jagged per-object masks will not index event arrays correctly.
+
 ## Audit the outputs
 
 Run from the repo root:
@@ -69,6 +93,14 @@ Use rerun mode to repair missing artifacts:
 ```bash
 python scripts/check_dataset_files.py --configs stats_100K/pretraining_multiclass.yaml --rerun
 ```
+
+For bulk prep over every dataset in one or more configs, use:
+
+```bash
+python jobs/prep_data/run_processing.py configs/run_3_ttH/scratch.yaml configs/run_3_ttH/finetuning.yaml
+```
+
+This calls `jobs/prep_data/prep_data.sh` for each dataset using the dataset-level `shuffle_chunks` value.
 
 Treat data prep as ready only if:
 

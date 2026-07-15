@@ -58,20 +58,41 @@ The number of configs and branch names must match.
 
 ## Parallel inference
 
-The repo includes an MPI wrapper:
+Use the generic MPI/local wrapper for many files or many models:
 
 ```bash
-mpirun -np <num_ranks> python jobs/inference/run_inference.py
+mpirun -np <num_ranks> python jobs/inference/run_inference.py \
+  --sample-config <config-with-target-datasets.yaml> \
+  --config-dir <directory-of-model-configs> \
+  --output-dir <output-directory> \
+  --write
 ```
 
-That script is campaign-specific, with hard-coded file lists, configs, branches, and destinations. Patch or copy it before using it for a different campaign.
+Useful variants:
+
+```bash
+python jobs/inference/run_inference.py --target '<glob-or-file.root>' --config model.yaml --output-dir scores --write
+python jobs/inference/run_inference.py --sample-config samples.yaml --config model_a.yaml model_b.yaml --branch-name score_a score_b --output-dir scores --write
+python jobs/inference/run_inference.py --sample-config samples.yaml --config-dir configs/run_3_ttH --output-dir scores --write --test
+```
+
+Wrapper behavior:
+
+- `--sample-config` discovers target ROOT files from every dataset's `args.raw_dir` and `args.file_names`.
+- `--target` accepts explicit files or glob patterns.
+- `--config-dir` discovers model configs from `*.yaml`; `--config` accepts explicit config files.
+- Branch names default to each model config's `Training_Name` plus `_score`.
+- `--branch-name` may override branch names, but the count must match the config count.
+- `--test` prints the planned `scripts/inference.py` commands without running them.
+- With MPI, tasks are split by target file across ranks; without MPI it runs serially.
+- GPU assignment is local rank modulo 4 through `CUDA_VISIBLE_DEVICES`.
 
 ## Repo-specific behavior
 
 - The first config's first dataset is used as the template dataset. The script rewrites `raw_dir`, `file_names`, `save_dir`, `chunks`, `process_chunks`, and optionally `tree_name` at runtime.
 - Pass `--tree <name>` if the ROOT tree name differs from the config default.
 - Chunked inference writes per-chunk outputs; merging those outputs is a separate step.
-- The script prepends a hard-coded repo path near the top of the file. If imports fail outside the expected NERSC layout, fix that path first.
+- Job wrappers should derive the repo root from their own path; avoid adding hard-coded checkout paths.
 
 ## Audit the outputs
 
