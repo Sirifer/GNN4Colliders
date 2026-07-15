@@ -2,12 +2,13 @@ import argparse
 import glob
 import os
 import sys
+from pathlib import Path
 
 import awkward as ak
 import uproot
 
-file_path = os.getcwd()
-sys.path.append(file_path)
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
 
 from root_gnn_base import utils
 from root_gnn_base.dataset import selection_branches, check_selection, print_cutflow, init_cutflow

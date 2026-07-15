@@ -3,6 +3,7 @@ import time
 import datetime
 import yaml
 import os
+from pathlib import Path
 
 start_time = time.time()
 
@@ -11,8 +12,8 @@ import torch
 import torch.nn as nn
 
 import sys
-file_path = os.getcwd()
-sys.path.append(file_path)
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
 import root_gnn_base.batched_dataset as datasets
 from root_gnn_base import utils
 import root_gnn_base.custom_scheduler as lr_utils

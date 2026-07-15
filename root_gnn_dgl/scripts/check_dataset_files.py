@@ -2,6 +2,9 @@ import yaml
 import os
 import subprocess
 import argparse
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 def check_dataset_files(yaml_file, rerun=False):
     """
@@ -69,9 +72,9 @@ def check_dataset_files(yaml_file, rerun=False):
                 # Optionally rerun data prep
                 if rerun:
                     print(f"  Reprocessing dataset '{dataset_name}' ...")
-                    prep_command = f"jobs/prep_data/prep_data.sh {yaml_file} {dataset_name} {chunks}"
+                    prep_command = [str(REPO_ROOT / "jobs/prep_data/prep_data.sh"), yaml_file, dataset_name, str(chunks)]
                     try:
-                        subprocess.run(prep_command, shell=True, check=True)
+                        subprocess.run(prep_command, check=True)
                     except subprocess.CalledProcessError as e:
                         print(f"  Could NOT reprocess '{dataset_name}': {e}")
             else:
@@ -87,8 +90,7 @@ def check_dataset_files(yaml_file, rerun=False):
         print(f"Error processing {yaml_file}: {e}")
 
 def main(pargs):
-    # Base directory containing the YAML files
-    base_directory = os.getcwd() + "/configs/"
+    base_directory = REPO_ROOT / "configs"
 
     if pargs.configs:
         configs = [p.strip() for p in pargs.configs.split(',')]
@@ -101,10 +103,11 @@ def main(pargs):
         ]
 
     for config in configs:
-        yaml_file = os.path.join(base_directory, config)
-        if os.path.exists(yaml_file):
+        config_path = Path(config).expanduser()
+        yaml_file = config_path if config_path.is_absolute() else base_directory / config_path
+        if yaml_file.exists():
             print(f"\nProcessing file: {config}")
-            check_dataset_files(yaml_file, pargs.rerun)
+            check_dataset_files(str(yaml_file), pargs.rerun)
         else:
             print(f"File not found: {yaml_file}")
 
@@ -114,7 +117,7 @@ if __name__ == "__main__":
         "--configs", "-c",
         type=str,
         required=False,
-        help="Comma-separated list of YAML config paths relative to base directory"
+        help="Comma-separated list of YAML config paths relative to configs/ or absolute paths"
     )
     parser.add_argument(
         "--rerun", "-r",

@@ -1,8 +1,10 @@
 import sys
 import os
 import glob
-file_path = os.getcwd()
-sys.path.append(file_path)
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
 
 import root_gnn_base.utils as utils
 from root_gnn_base.dataset import compute_cutflow, print_cutflow

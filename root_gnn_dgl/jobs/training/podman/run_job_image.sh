@@ -5,20 +5,21 @@ shift
 # Store any other potential arguments safely
 OTHER_ARGUEMENTS=("$@")
 
-DIRECTORY="/global/cfs/projectdirs/atlas/joshua/gnn/root_gnn_dgl/"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
-cd $DIRECTORY
+cd "$REPO_ROOT"
 
 # Use a bash array to build the command and its arguments
 # Each element in the () is a separate argument.
 COMMAND_ARGS=(
-    "$DIRECTORY/scripts/training_script.py"
+    "$REPO_ROOT/scripts/training_script.py"
     "${OTHER_ARGUEMENTS[@]}"
     "--preshuffle"
     "--nocompile"
     "--lazy"
     "--config"
-    "$DIRECTORY$CONFIG"
+    "$CONFIG"
 )
 
 echo "Running my script now"

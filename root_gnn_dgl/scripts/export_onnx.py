@@ -23,8 +23,8 @@ from pathlib import Path
 from types import MethodType, SimpleNamespace
 from typing import Any, Dict, Iterator, Optional, Tuple
 
-file_path = os.getcwd()
-sys.path.append(file_path)
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
 
 import dgl
 import matplotlib.pyplot as plt

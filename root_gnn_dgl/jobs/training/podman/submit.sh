@@ -1,8 +1,16 @@
+#!/bin/bash
+
 date
 
-DIRECTORY="/global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl/configs/model_configs/"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+RUN_JOB="$REPO_ROOT/jobs/training/podman/run_job.sh"
+SBATCH_ACCOUNT_ARGS=()
+if [ -n "${SLURM_ACCOUNT:-}" ]; then
+  SBATCH_ACCOUNT_ARGS=(--account "$SLURM_ACCOUNT")
+fi
 
-configs=(  
+default_configs=(
   # "configs/multiclass_pretraining/baseline.yaml"
   # "configs/multiclass_pretraining/pretraining_batch_size/multiclass_bs_4096.yaml"
   # "configs/multiclass_pretraining/pretraining_hid_size/multiclass_hid_256.yaml"
@@ -47,6 +55,12 @@ configs=(
 
 )
 
+if [ "$#" -gt 0 ]; then
+  configs=("$@")
+else
+  configs=("${default_configs[@]}")
+fi
+
 counter=0
 
 hours=24
@@ -54,7 +68,7 @@ time="${hours}:00:00"
 
 for job in "${configs[@]}"
 do
-  sbatch --job-name="$job" --time="$time" /global/cfs/projectdirs/atlas/joshua/gnn/root_gnn_dgl/jobs/training/podman/run_job.sh "$job"
+  sbatch "${SBATCH_ACCOUNT_ARGS[@]}" --job-name="$job" --time="$time" "$RUN_JOB" "$job"
   ((counter++))
 done
 

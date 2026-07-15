@@ -3,26 +3,32 @@
 #SBATCH -C gpu
 #SBATCH -q shared
 #SBATCH -t 15:00:00
-#SBATCH -A atlas
-#SBATCH -o /global/cfs/projectdirs/atlas/joshua/gnn/root_gnn_dgl/jobs/slurm/%j.out # STDOUT
+#SBATCH -o jobs/slurm/%j.out # STDOUT
 
 CONFIG=$1
 shift
-ARGUEMENTS="$*"
+ARGUMENTS=("$@")
 
-DIRECTORY="/global/cfs/projectdirs/atlas/joshua/gnn/root_gnn_dgl/"
-BASE_COMMAND="$DIRECTORY/training_script.py $ARGUEMENTS --preshuffle --nocompile --lazy --config $DIRECTORY"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
-echo "launched image"
-cd $DIRECTORY
+cd "$REPO_ROOT"
+mkdir -p jobs/slurm
 
 eval "$(conda shell.bash hook)"
-conda init bash
-conda activate /opt/conda/envs/dgl
+conda activate "${ROOT_GNN_CONDA_ENV:-dgl}"
 
-COMMAND="$BASE_COMMAND$CONFIG"
+COMMAND=(
+    "$REPO_ROOT/scripts/training_script.py"
+    "${ARGUMENTS[@]}"
+    "--preshuffle"
+    "--nocompile"
+    "--lazy"
+    "--config"
+    "$CONFIG"
+)
 
 echo "Running my script now"
-echo $COMMAND
-python -u $COMMAND
+echo "Executing: python -u ${COMMAND[*]}"
+python -u "${COMMAND[@]}"
 echo "Done"

@@ -1,7 +1,9 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import argparse
 import yaml
 import os
 import subprocess
+from pathlib import Path
 
 def extract_dataset_keys_and_chunks(yaml_file):
     """
@@ -34,12 +36,11 @@ def call_bash_script(config, dataset_key, shuffle_chunks, bash_script):
     """
     try:
         # Construct the command to call the bash script
-        command = f"{bash_script} {config} {dataset_key} {shuffle_chunks}"
+        command = [bash_script, config, dataset_key, str(shuffle_chunks)]
 
-        print(f"Executing command: {command}")  # Debugging: Print the command being executed
+        print(f"Executing command: {' '.join(command)}")
 
-        # Run the command
-        result = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
         if result.stdout:
             print(result.stdout, end="")
         if result.stderr:
@@ -55,7 +56,7 @@ def process_yaml_file(config, base_directory, bash_script):
     """
     Process a single YAML file by extracting datasets and calling the bash script in parallel.
     """
-    yaml_file = os.path.join(base_directory, config)  # Construct full path
+    yaml_file = os.path.join(base_directory, config)
     if os.path.exists(yaml_file):
         print(f"Processing file: {config}")
         datasets = extract_dataset_keys_and_chunks(yaml_file)
@@ -77,18 +78,19 @@ def process_yaml_file(config, base_directory, bash_script):
         return [f"File not found: {yaml_file}"]
 
 def main():
-    # Base directory containing the YAML files
-    base_directory = os.getcwd() + "/"
+    parser = argparse.ArgumentParser(description="Run prep_data.sh for every dataset in one or more configs.")
+    parser.add_argument("configs", nargs="+", help="YAML config files, relative to the repo root or absolute.")
+    parser.add_argument(
+        "--bash-script",
+        default=None,
+        help="Path to prep_data.sh. Defaults to jobs/prep_data/prep_data.sh under the repo root.",
+    )
+    args = parser.parse_args()
 
-    # List of YAML configuration files (relative to the base directory)
-    configs = [
-        # "configs/stats_100K/pretraining_multiclass.yaml",
-        "configs/stats_100K/ttH_CP_even_vs_odd.yaml",
-        # "configs/stats_all/pretraining_multiclass.yaml",
-    ]
-
-    # Path to the bash script to be called
-    bash_script = base_directory + "jobs/prep_data/prep_data.sh"
+    repo_root = Path(__file__).resolve().parents[2]
+    base_directory = str(repo_root) + "/"
+    configs = [str(Path(config).resolve()) if Path(config).is_absolute() else config for config in args.configs]
+    bash_script = args.bash_script or str(repo_root / "jobs/prep_data/prep_data.sh")
 
     # Use ThreadPoolExecutor to process YAML files concurrently
     max_workers = os.cpu_count()  # Use all available CPU cores

@@ -1,6 +1,4 @@
 import sys
-file_path = "/global/cfs/projectdirs/atlas/joshua/root_gnn/root_gnn_dgl"
-sys.path.append(file_path)
 import os
 import argparse
 import yaml
@@ -8,6 +6,10 @@ import gc
 from array import array
 import fnmatch
 import re
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
 
 import torch
 import dgl

@@ -3,12 +3,16 @@
 #SBATCH -C "gpu&hbm80g"
 #SBATCH -q shared
 #SBATCH -t 24:00:00
-#SBATCH -A atlas
-#SBATCH -o /global/cfs/projectdirs/atlas/joshua/gnn/root_gnn_dgl/jobs/slurm/%j.out # STDOUT
+#SBATCH -o jobs/slurm/%j.out # STDOUT
 
-ARGUEMENTS="$*"
+ARGUMENTS=("$@")
 
-echo "Arguements: $ARGUEMENTS"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
-## create a launch image script
-source "/global/cfs/projectdirs/atlas/joshua/gnn/root_gnn_dgl/setup/launch_image.sh" "/global/cfs/projectdirs/atlas/joshua/gnn/root_gnn_dgl/jobs/training/podman/run_job_image.sh" $ARGUEMENTS
+cd "$REPO_ROOT"
+mkdir -p jobs/slurm
+
+echo "Arguments: ${ARGUMENTS[*]}"
+
+source "$REPO_ROOT/setup/launch_image.sh" "$REPO_ROOT/jobs/training/podman/run_job_image.sh" "${ARGUMENTS[@]}"
