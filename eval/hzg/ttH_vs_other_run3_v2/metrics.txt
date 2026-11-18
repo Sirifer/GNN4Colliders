@@ -1,0 +1,14 @@
+checkpoint_epoch: 34
+test_events: 217856
+ttH_events: 86784
+other_events: 131072
+unweighted_auc: 0.975110
+positive_weight_lumi_auc: 0.973957
+weighted_youden_threshold: 0.711057
+negative_weight_events: 15827
+zero_weight_events: 0
+positive_weight_events: 202029
+sum_weight_lumi_ttH: 0.81749547
+sum_weight_lumi_other: 7895.8916
+category_other_events: 131072
+category_ttH_events: 86784

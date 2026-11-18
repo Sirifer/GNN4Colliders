@@ -1,0 +1,12 @@
+data: Run 3 only (2022preEE/postEE, 2023preBPix/postBPix, 2024, 2025)
+fold: test only (event % 4 == 0)
+mass_window: [120.0, 130.0] GeV
+selection: is_SR == 1
+inclusive_S: 1.1194546
+inclusive_B: 1253.6189
+inclusive_asimov_Z: 0.031613
+best_threshold: 0.9900
+best_S: 0.54608717
+best_B: 4.4163579
+best_SoverSqrtB: 0.259854
+best_asimov_Z: 0.254757

@@ -1,0 +1,97 @@
+2026-11-01 工作日志
+==================
+你先读一下，我现在要做一件新的事，1、我要用新的样本，在/publicfs/cms/user/laipeizhu/Eos
+  /HZgamma/root_p2root_
+    v3_Mll80to100.第一步就是和/scratchfs2/cms/huangsuyun/GNN4Colliders/tools/code/merge_trees_all.py一样写一
+  个脚
+    本把它拷贝过来并做一些操作，这次ggF  ttH  VBF
+  VH四种都要copy，因为我打算做4class的，tth一种，VH，ggF+VBF，然后bkg，bkg除了之前的两种还要加上DYG其他质量点
+  ，还有DYJetsToLL_Stitch。现在所有样本都用run3+run3也就是所有样本，data也是。这次也要加上pt
+  mass处理，就和/scratchfs2/cms/huangsuyun/GNN4Colliders/tools/code/prepare_pt_only_inputs.py这个一样。你可以
+  两个脚本一起写。我最后划分fold还是和之前一样用光子eta。2、对于config划分。你可以借鉴之前的，直接用4fold。jo
+  b也是。3、最后Z的计算用上CR目的和之前一样，之前CR没有sideband，现在有了，也在原始的数据里面。这样你看第一步
+  怎么做更好。现在也是5个category"ttHhad", "ttHlep", "untag", "VH3l", "VHpTmiss"，训练的时候用上SB，Z不用。你
+  能明白我的意思嘛。先梳理思路，讲一下你准备怎么做。然后第一步你打算怎么做。写好的代码之后功能是什么，然后让
+  我来跑。最后在这里/scratchfs2/cms/huangsuyun/GNN4Colliders/tools/skills写一个新的workflow。
+任务: v3 (Mll80to100) 4-class GNN 数据准备 + config/job + workflow 文档
+
+一、做了什么 / 代码在哪 / 结果在哪
+---------------------------------
+1. 数据准备脚本(写好并小样本验证通过)
+   - /scratchfs2/cms/huangsuyun/GNN4Colliders/tools/code/merge_trees_v3.py
+     功能: v3 原始样本 → root_p2root_v3_merged, 合并 5 category 的 SR+Sideband,
+           加 source_tree_tag/weight_lumi_abs/photon_eta_fold
+   - /scratchfs2/cms/huangsuyun/GNN4Colliders/tools/code/prepare_pt_only_inputs_v3.py
+     功能: merged → root_p2root_v3_pt_only, 加 _div_mllg 派生分支 + weight_lumi_avg
+   - /scratchfs2/cms/huangsuyun/GNN4Colliders/tools/code/gen_4class_4fold_configs_jobs.py
+     功能: 生成下面全部 config + job
+
+2. config + job(生成 20 个文件, 全部验证通过)
+   config:  root_gnn_dgl/configs/hzg/ttH_4class_4fold_fold{0,1,2,3}.yaml
+   job:     root_gnn_dgl/jobs/{prep_data,training,inference}/hzg_ttH_4class_4fold_*
+   - 4-class: bkg=0, ttH=1, VH=2, ggF+VBF=3, CrossEntropyLoss, out_size=4
+   - Run2+Run3 全部 11 era, 同旧 pt_only 输入方案, 同旧 4-fold 轮转
+   - YAML 解析 + bash 语法 + 文件数(89 MC + 11 Data/fold)验证通过
+
+3. workflow 文档
+   /scratchfs2/cms/huangsuyun/GNN4Colliders/tools/skills/hzg_ttH_4class_v3_workflow.txt
+   含: v3 关键变化 / 目录路径 / 第1步脚本功能 / 第2步config+job / 第3步Z思路 / 状态
+
+二、完成了什么
+-------------
+- 第 1 步: 两个数据脚本写好, 用 ttH 2022preEE(9390 events) + Data(214) 真实跑通验证
+  (source_tree_tag 0-9, photon_eta_fold=floor(eta*10000), _div_mllg, weight_lumi_avg 全对)
+- 第 2 步: 4 fold config + 16 sbatch 生成并验证
+- 第 3 步: Z 思路写好(用 CR_lowIDMVA_SB sideband fit), Z 脚本待第2步出分后补
+- workflow 文档写好
+
+三、关键发现(影响设计的)
+------------------------
+1. v3 原始文件无 photon_eta_fold / weight_lumi_avg, 是分步补的(v2 用 add_photon_eta_fold.py
+   + add_avg_weight_and_check.py)。v3 把它们合进 merge / pt_only, 省 I/O, 2 个脚本搞定。
+2. v3 含 SR__ggF/__VBF 分析 category tree + 一堆 *_JES_up 系统性 tree, merge 用 set
+   精确匹配只拿 5 category 的 10 个 tree, 不误捡。
+3. photon_eta_fold = int32(photon_eta*10000), fold 用 %n_folds 划分(utils.py:126)。
+4. weight_lumi_avg 按样本目录分组(同 process 全 era 共用一个常数), Data 在 v3 里 weight=1.0。
+5. 训练框架已支持多分类: training_script.py 第321-325行按 loss 类名切 label dtype,
+   第334-352行 per-label 归一化 loss; inference.py 多分类 score 写成 vector<float> 分支。
+6. CR 结构: CR_lowIDMVA__<cat>(SR 区) + CR_lowIDMVA_SB__<cat>(sideband 区), 5 category 都有,
+   Data 也有。Z 用 CR_SB 做 m_llg mass fit 外推 B_SR。训练用分析 Sideband, Z 用 CR sideband,
+   两者不同。
+
+四、遇到的问题 / 怎么解决
+-------------------------
+1. 问题: 初版 config YAML 用 `*dataset_defn` 后直接跟 key 覆盖, 解析报错(line 174)。
+   解决: 改用 YAML merge key `<<: *dataset_defn` + `args: <<: *dataset_args`(参考旧
+   pretraining_multiclass.yaml), node_branch 改单行 [..] 写法。
+2. 问题: prepare_pt_only 文档说"Data 无 weight → 写 NaN", 实测 v3 Data 有 weight_lumi(=1.0)。
+   解决: Data 走正常路径(avg=1.0), 修正文档描述, None/NaN fallback 仅防御未来无 weight 情况。
+3. 问题: pt_only 脚本有个死代码 rel_dir 算错(用 parent.parent)。
+   解决: 删掉, avg_weight 已在 main 算好传入。
+
+五、下一步(待用户跑)
+--------------------
+- 跑: $PYTHON merge_trees_v3.py  →  $PYTHON prepare_pt_only_inputs_v3.py
+- 4 fold 依次: prep → train → infer(MC + Data)
+- 出分后: 写 significance_4class_v3.py(用 CR_lowIDMVA_SB sideband fit 算 Z)
+
+六、关键决策(已和用户确认)
+--------------------------
+- 4-class label: 0/1/2/3 多分类(CrossEntropy), 不是信号都=1
+- 输入方案: 同旧 pt_only(partial decorr)
+- fold 轮转: 同旧 4fold
+- era: Run2+Run3 全部 11 个
+- bkg: TT + 5个DYG + DYJetsToLL_Stitch
+- CR: 只用 CR_lowIDMVA_SB, 训练不用, Z 用
+- 第3步: 先写思路, Z 脚本后补
+
+七、补充(同日): merge_trees_v3.py 加 class_tag 字段
+--------------------------------------------------
+用户要求: merge 时多加一个 tag 标记样本来自哪个 class(共 4 个)。
+- merge_trees_v3.py 加 class_tag(int32), 按样本目录决定:
+    bkg=0, ttH=1, VH=2, ggF/VBF=3, Data=-1(不训练)
+  与 config 里 per-dataset label 一致, 同文件同值。
+- 加 class_tag_for(input_path, input_dir) 函数从路径推 class; main 算好后
+  传给 merge_one_file。
+- 验证: 6 个 class(ttH/VH/ggF/VBF/bkg/Data)真实跑通, class_tag unique 全对,
+  dtype=int32。class_tag 和 source_tree_tag 不同: 前者按 class, 后者按 region(0-9)。

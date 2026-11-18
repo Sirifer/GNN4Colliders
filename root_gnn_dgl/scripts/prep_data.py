@@ -29,6 +29,21 @@ def print_dataset_cutflow(dset_config, dataset_name):
         for file_name in file_names:
             files.extend(glob.glob(os.path.join(raw_dir, file_name)))
 
+    if not files:
+        raise FileNotFoundError(
+            f"No files found for dataset {dataset_name} in "
+            f"{os.path.join(raw_dir, str(file_names))}"
+        )
+
+    if not selections:
+        total = 0
+        for file in files:
+            with uproot.open(file) as f:
+                total += int(f[tree_name].num_entries)
+        cutflow = {"selections": [], "counts": [], "total": total}
+        print_cutflow(cutflow, title=f"Cutflow for {dataset_name}")
+        return
+
     branches = []
     for feat in args.get("node_branch_names", []):
         if isinstance(feat, list):
@@ -87,10 +102,14 @@ def main():
         if dset_config["class"] == "LazyMultiLabelDataset":
             LazyPreBatchedDataset(start_dataset = dset, batch_size = batch_size, mask_fn = utils.fold_selection(fold_conf, "train"), suffix = utils.fold_selection_name(fold_conf, "train"), chunks = shuffle_chunks, chunkno = args.chunk, padding_mode = padding_mode, drop_last=args.drop_last, hidden_size=config['Model']['args']['hid_size'], shuffle_seed=shuffle_seed )
             LazyPreBatchedDataset(start_dataset = dset, batch_size = batch_size, mask_fn = utils.fold_selection(fold_conf, "test"),  suffix = utils.fold_selection_name(fold_conf, 'test'), chunks = shuffle_chunks, chunkno = args.chunk, padding_mode = padding_mode, drop_last=args.drop_last, hidden_size=config['Model']['args']['hid_size'], shuffle_seed=shuffle_seed)
+            if "validation" in fold_conf:
+                LazyPreBatchedDataset(start_dataset = dset, batch_size = batch_size, mask_fn = utils.fold_selection(fold_conf, "validation"), suffix = utils.fold_selection_name(fold_conf, 'validation'), chunks = shuffle_chunks, chunkno = args.chunk, padding_mode = padding_mode, drop_last=args.drop_last, hidden_size=config['Model']['args']['hid_size'], shuffle_seed=shuffle_seed)
 
         else:
             PreBatchedDataset(dset, batch_size, utils.fold_selection(fold_conf, "train"), suffix = utils.fold_selection_name(fold_conf, "train"), chunks = shuffle_chunks, chunkno = args.chunk, padding_mode = padding_mode, drop_last=args.drop_last,hidden_size=config['Model']['args']['hid_size'], shuffle_seed=shuffle_seed)
             PreBatchedDataset(dset, batch_size, utils.fold_selection(fold_conf, "test"),  suffix = utils.fold_selection_name(fold_conf, 'test'), chunks = shuffle_chunks, chunkno = args.chunk, padding_mode = padding_mode, drop_last=args.drop_last,hidden_size=config['Model']['args']['hid_size'], shuffle_seed=shuffle_seed )
+            if "validation" in fold_conf:
+                PreBatchedDataset(dset, batch_size, utils.fold_selection(fold_conf, "validation"), suffix = utils.fold_selection_name(fold_conf, 'validation'), chunks = shuffle_chunks, chunkno = args.chunk, padding_mode = padding_mode, drop_last=args.drop_last, hidden_size=config['Model']['args']['hid_size'], shuffle_seed=shuffle_seed)
 
 if __name__ == "__main__":
     main()

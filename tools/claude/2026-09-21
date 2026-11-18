@@ -1,0 +1,163 @@
+Pretrained Model 使用方法
+
+  这个代码库中，使用 pretrained model 有两种场景：
+
+  ---
+
+  1. 推理（打分） — 使用 scripts/inference.py
+
+  直接从 pretrained model 的 checkpoint（model_epoch_XX.pt）对新数据打分。
+
+  关键点：需要把 config.yaml 里的 Training_Directory 改成 pretrained model 所在的本地路径。
+
+  先修改 config.yaml：
+  # 把这一行
+  Training_Directory: trainings/pretraining_multiclass/multiclass_12_process/
+  # 改成
+  Training_Directory: /scratchfs2/cms/huangsuyun/GNN4Colliders/root_gnn_dgl/Pretrained_GNN/multiclass_pretrained_model_12
+
+  然后运行推理：
+  cd /scratchfs2/cms/huangsuyun/GNN4Colliders/root_gnn_dgl
+
+  python scripts/inference.py \
+    --config /scratchfs2/cms/huangsuyun/GNN4Colliders/root_gnn_dgl/Pretrained_GNN/multiclass_pretrained_model_12/config.yaml \
+    --target /path/to/你的输入文件.root \
+    --destination /path/to/输出目录/ \
+    --branch_name pretrained_score \
+    --write          # 输出 ROOT 文件（不加则输出 .npz）
+
+  如果不想让程序自动选 best epoch，可以直接指定 epoch 编号：
+    --ckpt 71        # 直接用第71个 epoch 的模型
+
+  ---
+
+  2. 迁移学习（Fine-tuning） — 在 config yaml 里配置
+
+  把 pretrained model 当 backbone（骨干网络），冻结它的参数，只训练新的输出头，适配你自己的任务（比如 ttH vs other 二分类）。
+
+  使用 GCN.py 里的 Transferred_Learning 类，在 config yaml 里这样写：
+
+  Model:
+    module: models.GCN
+    class: Transferred_Learning        # 迁移学习模式
+    args:
+      hid_size: 64
+      out_size: 1                      # 你的任务输出维度（二分类填1）
+      n_layers: 4
+      n_proc_steps: 4
+      dropout: 0
+      pretraining_path: /scratchfs2/cms/huangsuyun/GNN4Colliders/root_gnn_dgl/Pretrained_GNN/multiclass_pretrained_model_12/model_epoch_71.pt
+      pretraining_model:               # pretrained model 原始结构
+        module: models.GCN
+        class: Edge_Network
+        args:
+          hid_size: 64
+          in_size: 7
+          out_size: 12                 # 原来是12分类
+          n_layers: 4
+          n_proc_steps: 4
+          dropout: 0
+
+  这种方式会冻结 GNN backbone 的所有参数，只训练新加的 global_decoder 和 classify 层。
+
+  ---
+
+  总结对比
+
+  ┌──────────────────────────────────┬────────────────────────────┬──────────────────────┐
+  │             使用目的             │           模型类           │         入口         │
+  ├──────────────────────────────────┼────────────────────────────┼──────────────────────┤
+  │ 只打分（inference）              │ Edge_Network（原样使用）   │ scripts/inference.py │
+  ├──────────────────────────────────┼────────────────────────────┼──────────────────────┤
+  │ 迁移学习（冻结backbone，训新头） │ Transferred_Learning       │ config yaml 中配置   │
+  ├──────────────────────────────────┼────────────────────────────┼──────────────────────┤
+  │ 迁移学习 + 额外处理步骤          │ Transferred_Learning_Graph │ config yaml 中配置   │
+  └──────────────────────────────────┴────────────────────────────┴──────────────────────┘
+
+
+  两个 config 文件已创建好，现在告诉你怎么跑：
+
+  ---
+
+  两个 config 已生成，直接运行
+
+  策略A：Transferred_Learning（只训练新 head，最简单）
+
+  cd /scratchfs2/cms/huangsuyun/GNN4Colliders/root_gnn_dgl
+
+  python scripts/training_script.py \
+    --config configs/hzg/ttH_TL_fold0.yaml
+
+  策略B：Transferred_Learning_Graph（额外2步GNN，更灵活，推荐先试这个）
+
+  cd /scratchfs2/cms/huangsuyun/GNN4Colliders/root_gnn_dgl
+
+  python scripts/training_script.py \
+    --config configs/hzg/ttH_TL_Graph_fold0.yaml
+
+  ---
+
+  cd /scratchfs2/cms/huangsuyun/GNN4Colliders/root_gnn_dgl
+
+  python scripts/training_script.py \
+    --config configs/hzg/ttH_TL_Graph_fold0.yaml
+
+  ---
+
+  两种策略的区别
+
+  ┌────────────┬───────────────────────────┬────────────────────────────────────┐
+  │            │         策略A TL          │           策略B TL_Graph           │
+  ├────────────┼───────────────────────────┼────────────────────────────────────┤
+  │ Backbone   │ 完全冻结                  │ 完全冻结                           │
+  ├────────────┼───────────────────────────┼────────────────────────────────────┤
+  │ 额外处理   │ 无                        │ 2步新 GNN message passing          │
+  │ Backbone   │ 完全冻结                  │ 完全冻结                           │
+  ├────────────┼───────────────────────────┼────────────────────────────────────┤
+  │ 额外处理   │ 无                        │ 2步新 GNN message passing          │
+  ├────────────┼───────────────────────────┼────────────────────────────────────┤
+  │ 可训练参数 │ global_decoder + classify │ 2步GNN + global_decoder + classify │
+  ├────────────┼───────────────────────────┼────────────────────────────────────┤
+  │ 额外处理   │ 无                        │ 2步新 GNN message passing          │
+  ├────────────┼───────────────────────────┼────────────────────────────────────┤
+  │ 可训练参数 │ global_decoder + classify │ 2步GNN + global_decoder + classify │
+  ├────────────┼───────────────────────────┼────────────────────────────────────┤
+  │ 适合情况   │ 数据少，怕过拟合          │ 任务与pretrain差异较大             │
+  │ 适合情况   │ 数据少，怕过拟合          │ 任务与pretrain差异较大             │
+
+  我的建议：先跑策略B（TL_Graph），因为你的任务（H→Zγ，CMS）与 pretrained model 的任务（H→γγ，ATLAS）差异不小，额外的 GNN
+  我的建议：先跑策略B（TL_Graph），因为你的任务（H→Zγ，CMS）与 pretrained model 的任务（H→γγ，ATLAS）差异不小，额外的 GNN
+  步骤能让模型更好地适配你的数据特征。
+  步骤能让模型更好地适配你的数据特征。
+  两种策略的区别
+
+  ┌────────────┬───────────────────────────┬────────────────────────────────────┐
+  │            │         策略A TL          │           策略B TL_Graph           │
+  ├────────────┼───────────────────────────┼────────────────────────────────────┤
+  │ Backbone   │ 完全冻结                  │ 完全冻结                           │
+  ├────────────┼───────────────────────────┼────────────────────────────────────┤
+  │ 额外处理   │ 无                        │ 2步新 GNN message passing          │
+  ├────────────┼───────────────────────────┼────────────────────────────────────┤
+  │ 可训练参数 │ global_decoder + classify │ 2步GNN + global_decoder + classify │
+  ├────────────┼───────────────────────────┼────────────────────────────────────┤
+  │ 适合情况   │ 数据少，怕过拟合          │ 任务与pretrain差异较大             │
+  └────────────┴───────────────────────────┴────────────────────────────────────┘
+
+  我的建议：先跑策略B（TL_Graph），因为你的任务（H→Zγ，CMS）与 pretrained model 的任务（H→γγ，ATLAS）差异不小，额外的 GNN
+  步骤能让模型更好地适配你的数据特征。
+
+  ---
+
+  输出目录
+
+  - 策略A：/scratchfs2/cms/huangsuyun/GNN4Colliders/trainings/hzg/ttH_TL_fold0/
+  - 策略B：/scratchfs2/cms/huangsuyun/GNN4Colliders/trainings/hzg/ttH_TL_Graph_fold0/
+
+  训练结束后对比 training.log 里的 Test_AUC，与当前基准 0.9695 比较即可。
+
+✻ Sautéed for 2m 28s · done 20:11
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ [⧉ 1 line selected]  
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts · ← for agents

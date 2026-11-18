@@ -144,7 +144,7 @@ class PreBatchedDataset(DGLDataset):
                 print(f'Cache file {graph_path} does not exist, not loading from cache.')
                 return False
         return True
-    
+
     def load(self):
         if not self.save_to_disk:
             return
@@ -190,7 +190,7 @@ class LazyPreBatchedDataset(PreBatchedDataset):
             graph_path = os.path.join(self.save_dir, f'{self.name}_{ch}_{self.suffix}.bin')
             print(f'Loading dataset from {graph_path}')
             label_dict = dgl.data.graph_serialize.load_labels_v2(graph_path)
-            self.label_chunks.append(label_dict)            
+            self.label_chunks.append(label_dict)
 
     def __getitem__(self, idx):
         chunk_idx = -1
@@ -198,7 +198,7 @@ class LazyPreBatchedDataset(PreBatchedDataset):
         ev_idx = -999
         for i in range(len(self.label_chunks)):
             count = len(self.label_chunks[i]['labels'])
-            if idx < sum + count: 
+            if idx < sum + count:
                 chunk_idx = i
                 ev_idx = idx - sum
                 break
@@ -211,7 +211,7 @@ class LazyPreBatchedDataset(PreBatchedDataset):
         g.set_batch_num_nodes(self.label_chunks[chunk_idx]['batch_num_nodes'][ev_idx])
         g.set_batch_num_edges(self.label_chunks[chunk_idx]['batch_num_edges'][ev_idx])
         return g, self.label_chunks[chunk_idx]['labels'][ev_idx], self.label_chunks[chunk_idx]['tracking'][ev_idx], self.label_chunks[chunk_idx]['globals'][ev_idx]
-    
+
     def __len__(self):
         l = 0
         for chunk in self.label_chunks:

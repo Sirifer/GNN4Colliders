@@ -1,0 +1,128 @@
+
+  ---
+
+  Pretrained GNN 的基本结构（Edge_Network）
+
+  首先理解 pretrained model 本身的结构，它是一个 Graph Network，整体分三个部分：
+
+  输入 node/edge features
+          ↓
+  [Encoder]  node_encoder, edge_encoder, global_encoder
+             把原始输入映射到 hid_size=64 维的隐空间
+          ↓
+  [Message Passing × n_proc_steps=4]
+             每一步：
+             edge_update(edge, node_u, node_v, global) → new edge
+             node_update(node, sum_edges, global)       → new node
+             global_update(global, mean_nodes, mean_edges) → new global
+          ↓
+  [Decoder]  global_decoder → classify(→ out_size)
+
+  这个模型是在 ATLAS H→γγ 数据上训练做 12分类（out_size=12）的，已经学会了"如何从粒子图里提取有用的拓扑特征"。
+
+  ---
+
+  Fine-tuning 的核心思路
+
+  你的任务（H→Zγ ttH vs other）和它的任务（H→γγ 多分类）不同，但物理对象很相似（都有 jet、lepton、photon、MET）。所以：
+
+  ▎ 不从零开始训练，而是复用 pretrained model 学到的特征提取能力，只训练一个新的分类头。
+
+  这就是 Transferred_Learning_Graph 做的事。
+
+  ---
+
+  Transferred_Learning_Graph 的具体做法
+
+  输入 node/edge features（你的 H→Zγ 数据）
+          ↓
+  [Pretrained Encoder]  TL_node_encoder, TL_edge_encoder, TL_global_encoder
+                        ← 权重冻结，不更新
+          ↓
+  [Pretrained Message Passing × 4步]
+                        ← 权重冻结，不更新
+          ↓
+  此时 node/edge/global 已经是 64 维的"物理感知"特征向量
+          ↓
+  [新的 Message Passing × additional_proc_steps=2]  ← 权重随机初始化，正常训练
+     node_update, edge_update, global_update（新建的 MLP）
+          ↓
+  [新的 Decoder]  global_decoder → classify(→ out_size=1)  ← 正常训练
+
+  代码里的体现（GCN.py:418-420）：
+  for param in self.pretrained_model.parameters():
+      param.requires_grad = False  # 冻结所有 pretrained 参数
+
+  ---
+
+  为什么要加 additional_proc_steps（策略B vs 策略A）
+
+  策略A（Transferred_Learning）只加了一个新 decoder，直接把 pretrained 的 global 特征送进新分类头。问题是 pretrained 模型最后的 global 向量是为
+  12分类优化的，对你的二分类任务不一定最优。
+
+  策略B（Transferred_Learning_Graph）在 pretrained 输出后额外做 2 步新的 message passing，让模型有机会"重新组织"特征：
+
+  pretrained 输出的 node/edge 向量
+      ↓  （这时候特征已经有物理含义，比如"这是个 b-jet 吗"、"这两个粒子是否来自同一顶点"）
+  新的 GNN 步骤 × 2  （在这个好的特征空间上，专门为你的 ttH vs other 任务做适配）
+      ↓
+  分类头
+
+  ---
+
+  和从头训练相比的优劣
+
+  ┌──────────────────┬────────────────────┬──────────────────────────┐
+  │                  │      从头训练      │   TL_Graph fine-tuning   │
+  ├──────────────────┼────────────────────┼──────────────────────────┤
+  │ 需要数据量       │ 多（ttH 样本很少） │ 少（参数少）             │
+  ├──────────────────┼────────────────────┼──────────────────────────┤
+  │ 训练速度         │ 慢                 │ 快（大部分参数冻结）     │
+  ├──────────────────┼────────────────────┼──────────────────────────┤
+  │ 初始特征质量     │ 随机               │ 继承 pretrained 物理知识 │
+  ├──────────────────┼────────────────────┼──────────────────────────┤
+  │ 对任务差异的适应 │ 完全自由           │ 受 backbone 输出空间限制 │
+  ├──────────────────┼────────────────────┼──────────────────────────┤
+  ---
+
+  一个潜在问题要注意
+
+  策略B（Transferred_Learning_Graph）在 pretrained 输出后额外做 2 步新的 message passing，让模型有机会"重新组织"特征：
+
+  pretrained 输出的 node/edge 向量
+      ↓  （这时候特征已经有物理含义，比如"这是个 b-jet 吗"、"这两个粒子是否来自同一顶点"）
+  新的 GNN 步骤 × 2  （在这个好的特征空间上，专门为你的 ttH vs other 任务做适配）
+      ↓
+  分类头
+
+  和从头训练相比的优劣
+  和从头训练相比的优劣
+
+  ┌──────────────────┬────────────────────┬──────────────────────────┐
+  │                  │      从头训练      │   TL_Graph fine-tuning   │
+  ├──────────────────┼────────────────────┼──────────────────────────┤
+  │ 需要数据量       │ 多（ttH 样本很少） │ 少（参数少）             │
+  ├──────────────────┼────────────────────┼──────────────────────────┤
+  │ 训练速度         │ 慢                 │ 快（大部分参数冻结）     │
+  ├──────────────────┼────────────────────┼──────────────────────────┤
+  │ 初始特征质量     │ 随机               │ 继承 pretrained 物理知识 │
+  ├──────────────────┼────────────────────┼──────────────────────────┤
+  │ 对任务差异的适应 │ 完全自由           │ 受 backbone 输出空间限制 │
+  ├──────────────────┼────────────────────┼──────────────────────────┤
+  │ 过拟合风险       │ 高                 │ 低                       │
+  └──────────────────┴────────────────────┴──────────────────────────┘
+
+  你的情况：ttH 样本数量有限，pretrained model 又在类似物理对象上训练过，fine-tuning 是很合理的选择。
+
+  ---
+
+  一个潜在问题要注意
+
+  Pretrained model 的 in_size=7，你现在的 config 也是 7 个 feature（pt, eta, phi, CALC_E, btag/mva, pdgId, NODE_TYPE），维度对得上。但
+  pretrained 用的是原始 pt，你现在换成了 pt_div_mllg。这意味着输入分布不一样，pretrained encoder 的权重是在原始 pt 的分布上学的。
+
+  这是一个 trade-off：
+  - 用原始 pt → 输入分布与 pretrained 一致，encoder 能更好地发挥作用，但可能引入 mass sculpting
+  - 用 pt_div_mllg → 有助于 mass decorrelation，但 pretrained encoder 看到的是"它没见过的"归一化 pt，可能需要更多 additional_proc_steps 来适配
+
+  训完之后可以对比 AUC 和 mass sculpting 程度来判断哪个更好。

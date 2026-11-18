@@ -209,7 +209,7 @@ class RootDataset(DGLDataset):
     def make_graph(self, ch):
         t1 = time.time()
         features, _ = node_features_from_tree(ch, self.node_branch_names, self.node_branch_types, self.node_feature_scales)
-        features = features[features[:,0] != 0]
+        features = features[features[:,0] > 0]
         t2 = time.time()
         g = full_connected_graph(features.shape[0], self_loops=False)
         g.ndata['features'] = features
@@ -229,41 +229,102 @@ class RootDataset(DGLDataset):
                 self.files.extend(glob.glob(os.path.join(self.raw_dir, file_name)))
         branches = self.get_list_of_branches()
 
-        # Read all files and concatenate arrays
-        arrays = []
-        for file in self.files:
-            with uproot.open(file) as f:
-                arrays.append(f[self.tree_name].arrays(branches, library="ak"))
-        if len(arrays) == 0:
-            print('No files found in {}'.format(os.path.join(self.raw_dir, self.file_names)))
+        if len(self.files) == 0:
+            print(
+                'No files found in {}'.format(
+                    os.path.join(self.raw_dir, str(self.file_names))
+                )
+            )
             return
-        data = ak.concatenate(arrays, axis=0)
-        sel_mask = selection_mask(data, self.selections)
-        selected_indices = np.arange(len(data[branches[0]]))
-        if sel_mask is not None:
-            selected_indices = selected_indices[ak.to_numpy(sel_mask)]
-        n_entries = len(selected_indices)
+
+        chunk_jobs = []
+        if len(self.selections) == 0 and self.chunks > 1:
+            # The common production path has no event selection. Read only the
+            # requested global chunk instead of loading every input file for
+            # every independent chunk job.
+            file_entries = []
+            for file in self.files:
+                with uproot.open(file) as f:
+                    file_entries.append(int(f[self.tree_name].num_entries))
+            n_entries = sum(file_entries)
+            chunk_boundaries = np.linspace(0, n_entries, self.chunks + 1, dtype=np.int64)
+            for process_chunk in self.process_chunks:
+                global_start = int(chunk_boundaries[process_chunk])
+                global_stop = int(chunk_boundaries[process_chunk + 1])
+                arrays = []
+                file_offset = 0
+                for file, entries in zip(self.files, file_entries):
+                    local_start = max(0, global_start - file_offset)
+                    local_stop = min(entries, global_stop - file_offset)
+                    if local_start < local_stop:
+                        with uproot.open(file) as f:
+                            arrays.append(
+                                f[self.tree_name].arrays(
+                                    branches,
+                                    entry_start=local_start,
+                                    entry_stop=local_stop,
+                                    library="ak",
+                                )
+                            )
+                    file_offset += entries
+                if len(arrays) == 1:
+                    data = arrays[0]
+                else:
+                    data = ak.concatenate(arrays, axis=0)
+                chunk_jobs.append(
+                    (
+                        process_chunk,
+                        data,
+                        np.arange(global_stop - global_start),
+                        global_start,
+                    )
+                )
+        else:
+            # Selections need a global mask before chunking, so retain the
+            # original all-input behavior for that less common path.
+            arrays = []
+            for file in self.files:
+                with uproot.open(file) as f:
+                    arrays.append(f[self.tree_name].arrays(branches, library="ak"))
+            data = arrays[0] if len(arrays) == 1 else ak.concatenate(arrays, axis=0)
+            sel_mask = selection_mask(data, self.selections)
+            selected_indices = np.arange(len(data[branches[0]]))
+            if sel_mask is not None:
+                selected_indices = selected_indices[ak.to_numpy(sel_mask)]
+            n_entries = len(selected_indices)
+            selected_chunks = np.array_split(selected_indices, self.chunks)
+            for process_chunk in self.process_chunks:
+                chunk_jobs.append(
+                    (process_chunk, data, selected_chunks[process_chunk], 0)
+                )
+
         newtime = time.time()
         times[0] += newtime - oldtime
-        chunks = np.array_split(selected_indices, self.chunks)
-        chunks = [chunk for i, chunk in enumerate(chunks) if i in self.process_chunks]
 
         self.graph_chunks = []
         self.label_chunks = []
         self.tracking_chunks = []
         self.global_chunks = []
         cutflow = init_cutflow(self.selections)
-        chunk_id = -1
-        for chunk in chunks:
-            print('Processing chunk {}/{}'.format(chunk_id + 1, len(chunks)), flush=True)
-            chunk_id += 1
+        for chunk_id, (process_chunk, data, chunk, global_start) in enumerate(chunk_jobs):
+            print(
+                'Processing requested chunk {}/{} ({} events)'.format(
+                    process_chunk, self.chunks, len(chunk)
+                ),
+                flush=True,
+            )
             graphs = []
             labels = []
             tracking = []
             globals = []
             for ientry in chunk:
-                if (ientry % 10000 == 0):
-                    print('Processing event {}/{}'.format(ientry, n_entries), flush=True)
+                if ((ientry + global_start) % 10000 == 0):
+                    print(
+                        'Processing event {}/{}'.format(
+                            ientry + global_start, n_entries
+                        ),
+                        flush=True,
+                    )
                 ch = {b: data[b][ientry] for b in branches}
                 passed = True
                 for selection in self.selections:

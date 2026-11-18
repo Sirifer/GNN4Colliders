@@ -484,6 +484,155 @@ class Transferred_Learning_Graph(nn.Module):
         h_global = self.global_decoder(h_global)
         return self.classify(h_global)
 
+class Transferred_Learning_Graph_FT(nn.Module):
+    """
+    Transferred_Learning_Graph with selective backbone unfreezing.
+
+    unfreeze_last_n: number of pretrained_model child modules (counted from
+    the end) whose parameters will be trained. 0 = fully frozen (same as the
+    original class). The backbone children order matches Edge_Network:
+      [0] layers (unused ModuleList)
+      [1] node_encoder
+      [2] edge_encoder
+      [3] global_encoder
+      [4] node_update
+      [5] edge_update
+      [6] global_update
+      [7] global_decoder      ← unfreeze_last_n=1 unfreezes this
+    Use unfreeze_last_n=3 to unfreeze global_update + global_decoder (the
+    parts closest to the output); 4 also unfreezes edge_update, etc.
+    """
+
+    def __init__(
+        self,
+        pretraining_path,
+        pretraining_model,
+        sample_graph,
+        sample_global,
+        hid_size,
+        out_size,
+        n_layers,
+        n_proc_steps,
+        additional_proc_steps=2,
+        unfreeze_last_n=0,
+        dropout=0,
+        **kwargs,
+    ):
+        super().__init__()
+        print(f'Unused args while creating GCN: {kwargs}')
+        self.n_layers = n_layers
+        self.n_proc_steps = n_proc_steps
+        self.additional_proc_steps = additional_proc_steps
+        self.layers = nn.ModuleList()
+
+        if len(sample_global) == 0:
+            self.has_global = False
+        else:
+            self.has_global = sample_global.shape[1] != 0
+        gl_size = sample_global.shape[1] if self.has_global else 1
+
+        self.pretrained_model = utils.buildFromConfig(
+            pretraining_model,
+            {'sample_graph': sample_graph, 'sample_global': sample_global},
+        )
+        checkpoint = torch.load(pretraining_path)
+        self.pretrained_model.load_state_dict(checkpoint['model_state_dict'])
+        pretrained_layers = list(self.pretrained_model.children())
+        pretrained_layers = pretrained_layers[:-1]  # drop final classify layer
+        self.pretrained_model = nn.Sequential(*pretrained_layers)
+
+        # Freeze all backbone parameters first, then selectively unfreeze.
+        for param in self.pretrained_model.parameters():
+            param.requires_grad = False
+
+        if unfreeze_last_n > 0:
+            n_children = len(list(self.pretrained_model.children()))
+            unfreeze_from = max(0, n_children - unfreeze_last_n)
+            for idx, child in enumerate(self.pretrained_model.children()):
+                if idx >= unfreeze_from:
+                    for param in child.parameters():
+                        param.requires_grad = True
+            print(
+                f'Unfreezing last {unfreeze_last_n} backbone modules '
+                f'(indices {unfreeze_from}–{n_children-1})'
+            )
+
+        # New trainable GNN layers on top of backbone output.
+        self.node_update = Make_MLP(3 * hid_size, hid_size, hid_size, n_layers, dropout=dropout)
+        self.edge_update = Make_MLP(4 * hid_size, hid_size, hid_size, n_layers, dropout=dropout)
+        self.global_update = Make_MLP(3 * hid_size, hid_size, hid_size, n_layers, dropout=dropout)
+
+        self.global_decoder = Make_MLP(hid_size, hid_size, hid_size, n_layers, dropout=dropout)
+        self.classify = nn.Linear(hid_size, out_size)
+
+    def TL_node_encoder(self, x):
+        for layer in self.pretrained_model[1]:
+            x = layer(x)
+        return x
+
+    def TL_edge_encoder(self, x):
+        for layer in self.pretrained_model[2]:
+            x = layer(x)
+        return x
+
+    def TL_global_encoder(self, x):
+        for layer in self.pretrained_model[3]:
+            x = layer(x)
+        return x
+
+    def TL_node_update(self, x):
+        for layer in self.pretrained_model[4]:
+            x = layer(x)
+        return x
+
+    def TL_edge_update(self, x):
+        for layer in self.pretrained_model[5]:
+            x = layer(x)
+        return x
+
+    def TL_global_update(self, x):
+        for layer in self.pretrained_model[6]:
+            x = layer(x)
+        return x
+
+    def forward(self, g, global_feats):
+        h = self.TL_node_encoder(g.ndata['features'])
+        e = self.TL_edge_encoder(g.edata['features'])
+        g.ndata['h'] = h
+        g.edata['e'] = e
+        if not self.has_global:
+            global_feats = g.batch_num_nodes()[:, None].to(torch.float)
+        h_global = self.TL_global_encoder(global_feats)
+        for i in range(self.n_proc_steps):
+            g.apply_edges(dgl.function.copy_u('h', 'm_u'))
+            g.apply_edges(copy_v)
+            g.edata['e'] = self.TL_edge_update(
+                torch.cat((g.edata['e'], g.edata['m_u'], g.edata['m_v'], broadcast_global_to_edges(g, h_global)), dim=1)
+            )
+            g.update_all(dgl.function.copy_e('e', 'm'), dgl.function.sum('m', 'h_e'))
+            g.ndata['h'] = self.TL_node_update(
+                torch.cat((g.ndata['h'], g.ndata['h_e'], broadcast_global_to_nodes(g, h_global)), dim=1)
+            )
+            h_global = self.TL_global_update(
+                torch.cat((h_global, dgl.mean_nodes(g, 'h'), dgl.mean_edges(g, 'e')), dim=1)
+            )
+        for j in range(self.additional_proc_steps):
+            g.apply_edges(dgl.function.copy_u('h', 'm_u'))
+            g.apply_edges(copy_v)
+            g.edata['e'] = self.edge_update(
+                torch.cat((g.edata['e'], g.edata['m_u'], g.edata['m_v'], broadcast_global_to_edges(g, h_global)), dim=1)
+            )
+            g.update_all(dgl.function.copy_e('e', 'm'), dgl.function.sum('m', 'h_e'))
+            g.ndata['h'] = self.node_update(
+                torch.cat((g.ndata['h'], g.ndata['h_e'], broadcast_global_to_nodes(g, h_global)), dim=1)
+            )
+            h_global = self.global_update(
+                torch.cat((h_global, dgl.mean_nodes(g, 'h'), dgl.mean_edges(g, 'e')), dim=1)
+            )
+        h_global = self.global_decoder(h_global)
+        return self.classify(h_global)
+
+
 class Transferred_Learning_Parallel(nn.Module):
     def __init__(self, pretraining_path, pretraining_model, sample_graph, sample_global, hid_size, out_size, n_layers, n_proc_steps, dropout=0, **kwargs):
         super().__init__()

@@ -1,0 +1,92 @@
+Training_Name: cr_lowIDMVA_ttH_4class_4fold_fold2
+Training_Directory: /scratchfs2/cms/huangsuyun/GNN4Colliders/trainings/hzg/ttH_4class_4fold_fold2
+Model:
+  module: models.GCN
+  class: Edge_Network
+  args:
+    hid_size: 64
+    in_size: 6
+    out_size: 4
+    n_layers: 4
+    n_proc_steps: 4
+    dropout: 0
+Loss:
+  module: torch.nn
+  class: CrossEntropyLoss
+  args: {}
+  finish:
+    module: torch.nn
+    class: Softmax
+    args: {dim: 1}
+Training:
+  epochs: 100
+  batch_size: 256
+  learning_rate: 0.0001
+  gamma: 0.99
+Datasets:
+  cr_data: &dataset_defn
+    module: root_gnn_base.dataset
+    class: LazyDataset
+    shuffle_chunks: 4
+    padding_mode: NONE
+    args: &dataset_args
+      name: cr_data
+      label: 0
+      buffer_size: 2
+      chunks: 4
+      file_names:
+      - Data/Data/2016preVFP.root
+      - Data/Data/2016postVFP.root
+      - Data/Data/2017.root
+      - Data/Data/2018.root
+      - Data/Data/2022preEE.root
+      - Data/Data/2022postEE.root
+      - Data/Data/2023preBPix.root
+      - Data/Data/2023postBPix.root
+      - Data/Data/2024.root
+      - Data/Data/2025.root
+      - Data/Data/2026.root
+      fold_var: photon_eta_fold
+      node_branch_names:
+      - [jet0_pt, jet1_pt, jet2_pt, jet3_pt, jet4_pt, jet5_pt, bjet0_pt, bjet1_pt, lep0_pt_div_mllg, lep1_pt_div_mllg, lep2_pt_div_mllg, lep3_pt_div_mllg, lep4_pt_div_mllg, lep5_pt_div_mllg, photon_pt_div_mllg, MET_pt]
+      - [jet0_eta, jet1_eta, jet2_eta, jet3_eta, jet4_eta, jet5_eta, bjet0_eta, bjet1_eta, lep0_eta, lep1_eta, lep2_eta, lep3_eta, lep4_eta, lep5_eta, photon_eta, 0]
+      - [jet0_phi, jet1_phi, jet2_phi, jet3_phi, jet4_phi, jet5_phi, bjet0_phi, bjet1_phi, lep0_phi, lep1_phi, lep2_phi, lep3_phi, lep4_phi, lep5_phi, photon_phi, MET_phi]
+      - [jet0_hzg_btag_score, jet1_hzg_btag_score, jet2_hzg_btag_score, jet3_hzg_btag_score, jet4_hzg_btag_score, jet5_hzg_btag_score, bjet0_hzg_btag_score, bjet1_hzg_btag_score, 0, 0, 0, 0, 0, 0, photon_mvaID, 0]
+      - [0, 0, 0, 0, 0, 0, 0, 0, lep0_pdgId, lep1_pdgId, lep2_pdgId, lep3_pdgId, lep4_pdgId, lep5_pdgId, 22, 0]
+      - NODE_TYPE
+      node_branch_types:
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      node_feature_scales:
+      - 0.1
+      - 1
+      - 1
+      - 1
+      - 0.1
+      - 1
+      raw_dir: /scratchfs2/cms/huangsuyun/GNN4Colliders/root_p2root_v3_cr_pt_only
+      save_dir: /scratchfs2/cms/huangsuyun/GNN4Colliders/graphs/hzg/cr_lowIDMVA_4class_4fold
+      tracking_info:
+      - weight_lumi
+      - source_tree_tag
+      tree_name: merged_CR_lowIDMVA
+      weight_var: weight_lumi_avg
+    batch_size: 256
+    folding:
+      n_folds: 4
+      test: [2]
+      train: [0, 1, 3]

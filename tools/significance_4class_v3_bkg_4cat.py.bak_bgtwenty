@@ -1,0 +1,1131 @@
+#!/usr/bin/env python3
+"""
+significance_4class_v3_bkg_4cat.py
+
+4-class, 4-fold OOF significance study for HZgamma v3 (Mll80to100).
+
+Background estimate:
+    alpha = N_Data_SB / Y_BkgMC_SB
+    B_i   = alpha * Y_BkgMC_SR_i
+
+All four Higgs processes (ttH, VH, ggF, VBF) are treated as signal.
+The four mutually exclusive GNN categories are assigned using argmax of
+[p_bkg, p_ttH, p_VH, p_ggFVBF] plus three jointly-optimised thresholds.
+
+The same alpha is used for all four GNN categories within a given
+validation/test parity. Validation and test have separately calculated
+normalisations because they use disjoint photon_eta_fold parities.
+
+Mass windows:
+    SR = (120, 130) GeV
+    SB = [110, 120) U [130, 180] GeV
+
+Usage:
+    python significance_4class_v3_bkg_4cat.py --diagnostic-only
+    python significance_4class_v3_bkg_4cat.py --trials 200
+    python significance_4class_v3_bkg_4cat.py --no-optuna \
+        --c-tth 0.3 --c-vh 0.3 --c-ggfvbf 0.3
+
+The default MC weight branch is weight_lumi_avg, as specified in the
+v3 Step2 preparation summary. Use --weight-branch weight_lumi only
+if that is the agreed branch for the current production.
+"""
+
+import argparse
+import csv
+import sys
+from pathlib import Path
+
+import numpy as np
+import uproot
+
+try:
+    import optuna
+except Exception:
+    optuna = None
+
+
+# =============================================================================
+# 1. Configuration
+# =============================================================================
+
+REPO = Path("/scratchfs2/cms/huangsuyun/GNN4Colliders")
+OUT_DIR = REPO / "tools" / "results_4class_v3_bkg_4cat"
+
+MC_SCORED_BASE = REPO / "root_p2root_v3_pt_only_scored_ttH_4class_4fold_fold"
+DATA_SCORED_BASE = REPO / "root_p2root_v3_pt_only_scored_ttH_4class_4fold_data_fold"
+
+TEST_PARITY = {0: 0, 1: 1, 2: 2, 3: 3}
+VALID_PARITY = {0: 1, 1: 2, 2: 3, 3: 0}
+
+TREE_NOM = "merged_SR_Sideband"
+MASS = "m_llg"
+SCORE = "ttH_gnn_score"
+FOLDVAR = "photon_eta_fold"
+
+# Step2 summary identifies weight_lumi_avg as the weight consumed by Z scripts.
+# This can be overridden from the command line after checking the production.
+DEFAULT_WEIGHT_BRANCH = "weight_lumi_avg"
+
+# Mass windows: consistent with the current analysis workflow.
+MASS_LO = 120.0
+MASS_HI = 130.0
+SB_LO1, SB_HI1 = 110.0, 120.0
+SB_LO2, SB_HI2 = 130.0, 180.0
+
+# Label -> score column index.
+COL_BKG, COL_TTH, COL_VH, COL_GGFVBF = 0, 1, 2, 3
+
+# 0=Other, 1=ttH-enriched, 2=VH-enriched, 3=ggF+VBF-enriched.
+CATS = ["Other", "ttH", "VH", "ggFVBF"]
+CAT_OTHER, CAT_TTH, CAT_VH, CAT_GGFVBF = 0, 1, 2, 3
+
+SIGNAL_DIRS = [
+    "Signal/ttH",
+    "Signal/VH",
+    "Signal/ggF",
+    "Signal/VBF",
+]
+
+BKG_DIRS = [
+    "Bkg_MC/TT",
+    "Bkg_MC/DYGto2LG_10to100",
+    "Bkg_MC/DYGto2LG_100to200",
+    "Bkg_MC/DYGto2LG_200to400",
+    "Bkg_MC/DYGto2LG_400to600",
+    "Bkg_MC/DYGto2LG_600",
+    "Bkg_MC/DYJetsToLL_Stitch",
+]
+
+ALL_ERAS = [
+    "2016preVFP", "2016postVFP", "2017", "2018",
+    "2022preEE", "2022postEE", "2023preBPix", "2023postBPix",
+    "2024", "2025", "2026",
+]
+
+# Optuna: jointly optimise the three enriched-category thresholds.
+CUT_MIN, CUT_MAX = 0.10, 0.99
+N_TRIALS = 1000
+N_STARTUP_TRIALS = 50
+RANDOM_STATE = 12345
+
+
+# =============================================================================
+# 2. Statistics
+# =============================================================================
+
+def in_sr_mass(mass):
+    mass = np.asarray(mass)
+    return (mass > MASS_LO) & (mass < MASS_HI)
+
+
+def in_sb_mass(mass):
+    mass = np.asarray(mass)
+    return (
+        ((mass >= SB_LO1) & (mass < SB_HI1))
+        | ((mass >= SB_LO2) & (mass <= SB_HI2))
+    )
+
+
+def asimov_z(s, b):
+    """Discovery Asimov significance for a single category."""
+    if not np.isfinite(s) or not np.isfinite(b) or s <= 0.0 or b <= 0.0:
+        return 0.0
+    x = 2.0 * ((s + b) * np.log1p(s / b) - s)
+    return float(np.sqrt(x)) if x > 0.0 else 0.0
+
+
+def yield_info(weights):
+    """Weighted yield and MC statistical uncertainty."""
+    w = np.asarray(weights, dtype=np.float64)
+    if w.size == 0:
+        return {
+            "sum": 0.0, "err": 0.0, "sumw2": 0.0,
+            "n": 0, "nneg": 0, "neff": 0.0,
+        }
+    if not np.all(np.isfinite(w)):
+        raise ValueError("Non-finite MC weights found; refusing to calculate yields.")
+
+    sumw = float(np.sum(w))
+    sumw2 = float(np.sum(w * w))
+    neff = (sumw * sumw / sumw2) if sumw2 > 0.0 else 0.0
+    return {
+        "sum": sumw,
+        "err": float(np.sqrt(sumw2)),
+        "sumw2": sumw2,
+        "n": int(w.size),
+        "nneg": int(np.sum(w < 0.0)),
+        "neff": float(neff),
+    }
+
+
+def compute_normalization(data_sb, bkg):
+    """
+    One common alpha for all four GNN categories.
+
+    data_sb is already restricted to the combined sideband and one parity.
+    bkg contains all seven background processes, before mass selection.
+    """
+    n_data_sb = int(data_sb.n)
+
+    finite_data = np.isfinite(data_sb.mass)
+    data_low_mask = finite_data & (data_sb.mass >= SB_LO1) & (data_sb.mass < SB_HI1)
+    data_high_mask = finite_data & (data_sb.mass >= SB_LO2) & (data_sb.mass <= SB_HI2)
+    n_data_low = int(np.sum(data_low_mask))
+    n_data_high = int(np.sum(data_high_mask))
+
+    finite = np.isfinite(bkg.mass)
+    bkg_low_mask = finite & (bkg.mass >= SB_LO1) & (bkg.mass < SB_HI1)
+    bkg_high_mask = finite & (bkg.mass >= SB_LO2) & (bkg.mass <= SB_HI2)
+    bkg_sb_mask = bkg_low_mask | bkg_high_mask
+    y_bkg_low = yield_info(bkg.weight[bkg_low_mask])
+    y_bkg_high = yield_info(bkg.weight[bkg_high_mask])
+    y_bkg_sb = yield_info(bkg.weight[bkg_sb_mask])
+
+    alpha_low = (
+        n_data_low / y_bkg_low["sum"] if n_data_low > 0 and y_bkg_low["sum"] > 0.0
+        else float("nan")
+    )
+    alpha_high = (
+        n_data_high / y_bkg_high["sum"] if n_data_high > 0 and y_bkg_high["sum"] > 0.0
+        else float("nan")
+    )
+
+    norm = {
+        "N_data_sb": n_data_sb,
+        "N_data_sb_low": n_data_low,
+        "N_data_sb_high": n_data_high,
+        "N_bkg_sb": y_bkg_sb["n"],
+        "Y_bkg_sb": y_bkg_sb["sum"],
+        "sigma_Y_bkg_sb": y_bkg_sb["err"],
+        "sumw2_bkg_sb": y_bkg_sb["sumw2"],
+        "neff_bkg_sb": y_bkg_sb["neff"],
+        "nneg_bkg_sb": y_bkg_sb["nneg"],
+        "Y_bkg_sb_low": y_bkg_low["sum"],
+        "Y_bkg_sb_high": y_bkg_high["sum"],
+        "alpha_sb_low": float(alpha_low),
+        "alpha_sb_high": float(alpha_high),
+        "alpha": float("nan"),
+        "sigma_alpha": float("nan"),
+        "valid": False,
+    }
+
+    if n_data_sb <= 0 or y_bkg_sb["sum"] <= 0.0:
+        return norm
+
+    alpha = n_data_sb / y_bkg_sb["sum"]
+
+    # Independent Poisson Data count and finite-MC statistical uncertainty.
+    rel_var_alpha = (
+        1.0 / n_data_sb
+        + (y_bkg_sb["err"] / y_bkg_sb["sum"]) ** 2
+    )
+    sigma_alpha = alpha * np.sqrt(rel_var_alpha)
+
+    norm.update({
+        "alpha": float(alpha),
+        "sigma_alpha": float(sigma_alpha),
+        "valid": bool(np.isfinite(alpha) and alpha > 0.0),
+    })
+    return norm
+
+
+def combined_z(results, norm):
+    """
+    Combine four mutually exclusive categories in quadrature.
+
+    The uncertainty includes the common-alpha correlation:
+      - independent signal MC statistical errors by category;
+      - independent Bkg MC SR statistical errors by category;
+      - one shared alpha uncertainty, propagated coherently.
+
+    This is statistical-error propagation, not a profile-likelihood fit.
+    """
+    z2 = sum(r["Z"] ** 2 for r in results.values())
+    z_total = float(np.sqrt(z2))
+    if z_total <= 0.0:
+        return 0.0, 0.0
+
+    if not norm["valid"]:
+        return z_total, float("nan")
+
+    var_total = 0.0
+    alpha_derivative_sum = 0.0
+
+    for r in results.values():
+        s = r["S"]
+        b = r["B"]
+        if s <= 0.0 or b <= 0.0:
+            continue
+
+        log_term = np.log1p(s / b)
+
+        # Derivatives of Z_total = sqrt(sum_i Z_i^2).
+        dzt_ds = log_term / z_total
+        dzt_db = (log_term - s / b) / z_total
+
+        # Signal MC statistical contribution.
+        var_total += (dzt_ds * r["sigma_S"]) ** 2
+
+        # Bkg MC SR statistical contribution; B_i = alpha * Y_i.
+        var_total += (
+            dzt_db * norm["alpha"] * r["sigma_Y_bkg_sr"]
+        ) ** 2
+
+        # Common alpha contribution is added coherently after the loop.
+        alpha_derivative_sum += dzt_db * r["Y_bkg_sr"]
+
+    var_total += (alpha_derivative_sum * norm["sigma_alpha"]) ** 2
+    return z_total, float(np.sqrt(max(var_total, 0.0)))
+
+
+# =============================================================================
+# 3. ROOT loading helpers
+# =============================================================================
+
+def _stack_scores_4d(sc):
+    """Convert uproot std::vector<float>(4) branch to an (N,4) array."""
+    sc = np.asarray(sc)
+
+    if sc.size == 0:
+        return np.empty((0, 4), dtype=np.float32)
+
+    if sc.dtype == object or sc.ndim == 1:
+        rows = [np.asarray(v, dtype=np.float32).reshape(-1) for v in sc]
+        if not rows:
+            return np.empty((0, 4), dtype=np.float32)
+        sc = np.stack(rows, axis=0)
+
+    sc = np.asarray(sc, dtype=np.float32)
+    if sc.ndim != 2 or sc.shape[1] != 4:
+        raise ValueError(
+            f"{SCORE} must have shape (N,4), got shape {sc.shape}"
+        )
+    return sc
+
+
+class EventSet:
+    __slots__ = ("mass", "weight", "score", "foldvar")
+
+    def __init__(self, mass, weight, score, foldvar):
+        self.mass = np.asarray(mass, dtype=np.float64)
+        self.weight = np.asarray(weight, dtype=np.float64)
+        self.score = score
+        self.foldvar = np.asarray(foldvar, dtype=np.int32)
+
+        n = self.mass.size
+        if self.weight.size != n or self.foldvar.size != n:
+            raise ValueError("EventSet arrays have inconsistent lengths")
+        if self.score is not None and self.score.shape != (n, 4):
+            raise ValueError(
+                f"Score array must have shape ({n},4), got {self.score.shape}"
+            )
+
+    @property
+    def n(self):
+        return self.mass.size
+
+
+def empty_set(with_score=True):
+    score = np.empty((0, 4), dtype=np.float32) if with_score else None
+    return EventSet(
+        np.array([], dtype=np.float64),
+        np.array([], dtype=np.float64),
+        score,
+        np.array([], dtype=np.int32),
+    )
+
+
+def _concat_eventsets(parts, with_score=True):
+    parts = [p for p in parts if p.n > 0]
+    if not parts:
+        return empty_set(with_score=with_score)
+
+    scores = None
+    if with_score:
+        scores = np.concatenate([p.score for p in parts], axis=0)
+
+    return EventSet(
+        np.concatenate([p.mass for p in parts]),
+        np.concatenate([p.weight for p in parts]),
+        scores,
+        np.concatenate([p.foldvar for p in parts]),
+    )
+
+
+def _load_one_dir(base, subdir, weight_branch, with_weight=True, with_score=True):
+    """
+    Load one process from one scored fold directory.
+
+    Missing era files are reported and skipped because not every process has
+    all 11 eras. An existing but unreadable file or missing required branch
+    raises an error instead of silently dropping that file.
+    """
+    process_dir = base / subdir
+    if not process_dir.is_dir():
+        raise FileNotFoundError(f"Sample directory does not exist: {process_dir}")
+
+    branches = [MASS, FOLDVAR]
+    if with_score:
+        branches.append(SCORE)
+    if with_weight:
+        branches.append(weight_branch)
+
+    pieces = []
+    loaded_eras = []
+    missing_eras = []
+
+    for era in ALL_ERAS:
+        path = process_dir / f"{era}.root"
+        if not path.exists():
+            missing_eras.append(era)
+            continue
+
+        try:
+            with uproot.open(str(path)) as root_file:
+                if TREE_NOM not in root_file:
+                    raise KeyError(f"TTree {TREE_NOM!r} not found")
+                tree = root_file[TREE_NOM]
+                available = set(tree.keys())
+                missing_branches = [b for b in branches if b not in available]
+                if missing_branches:
+                    raise KeyError(
+                        f"Missing branches {missing_branches} in {path}"
+                    )
+                arrays = tree.arrays(branches, library="np")
+        except Exception as exc:
+            raise RuntimeError(f"Failed to read {path}: {exc}") from exc
+
+        mass = np.asarray(arrays[MASS], dtype=np.float64)
+        foldvar = np.asarray(arrays[FOLDVAR], dtype=np.int32)
+
+        if with_weight:
+            weight = np.asarray(arrays[weight_branch], dtype=np.float64)
+        else:
+            weight = np.ones(mass.shape, dtype=np.float64)
+
+        score = _stack_scores_4d(arrays[SCORE]) if with_score else None
+
+        pieces.append(EventSet(mass, weight, score, foldvar))
+        loaded_eras.append(era)
+
+    if not pieces:
+        raise RuntimeError(
+            f"No ROOT files were loaded for {subdir} under {base}"
+        )
+
+    result = _concat_eventsets(pieces, with_score=with_score)
+    info = {
+        "files": len(loaded_eras),
+        "eras": loaded_eras,
+        "missing_eras": missing_eras,
+    }
+    return result, info
+
+
+def load_signal_all(fold, weight_branch):
+    """Load and merge ttH + VH + ggF + VBF Signal MC."""
+    base = MC_SCORED_BASE.parent / f"{MC_SCORED_BASE.name}{fold}"
+    parts = []
+    infos = {}
+
+    for subdir in SIGNAL_DIRS:
+        eventset, info = _load_one_dir(
+            base, subdir, weight_branch, with_weight=True, with_score=True
+        )
+        parts.append(eventset)
+        infos[subdir] = info
+
+    return _concat_eventsets(parts, with_score=True), infos
+
+
+def load_background_all(fold, weight_branch):
+    """Load and merge all seven requested Background MC processes."""
+    base = MC_SCORED_BASE.parent / f"{MC_SCORED_BASE.name}{fold}"
+    parts = []
+    process_sets = {}
+    infos = {}
+
+    for subdir in BKG_DIRS:
+        eventset, info = _load_one_dir(
+            base, subdir, weight_branch, with_weight=True, with_score=True
+        )
+        process_sets[subdir] = eventset
+        parts.append(eventset)
+        infos[subdir] = info
+
+    return _concat_eventsets(parts, with_score=True), process_sets, infos
+
+
+def load_data_sideband(fold):
+    """
+    Load nominal Data and retain the combined mass sideband only.
+    Data is unweighted; all five original analysis categories are included.
+    """
+    base = DATA_SCORED_BASE.parent / f"{DATA_SCORED_BASE.name}{fold}"
+    eventset, info = _load_one_dir(
+        base, "Data/Data", DEFAULT_WEIGHT_BRANCH,
+        with_weight=False, with_score=False,
+    )
+
+    mask = np.isfinite(eventset.mass) & in_sb_mass(eventset.mass)
+    sideband = EventSet(
+        eventset.mass[mask],
+        eventset.weight[mask],
+        None,
+        eventset.foldvar[mask],
+    )
+    return sideband, info
+
+
+def select_parity(eventset, parity):
+    if eventset.n == 0:
+        return eventset
+
+    mask = (eventset.foldvar % 4) == parity
+    score = eventset.score[mask] if eventset.score is not None else None
+
+    return EventSet(
+        eventset.mass[mask],
+        eventset.weight[mask],
+        score,
+        eventset.foldvar[mask],
+    )
+
+
+# =============================================================================
+# 4. Category assignment: argmax + three thresholds
+# =============================================================================
+
+def assign_cat(score4d, c_tth, c_vh, c_ggfvbf):
+    """
+    score4d columns: [p_bkg, p_ttH, p_VH, p_ggFVBF].
+    Returns int32 category: 0=Other, 1=ttH, 2=VH, 3=ggFVBF.
+    """
+    if score4d is None:
+        raise ValueError("Cannot assign GNN categories without scores")
+    if score4d.shape[0] == 0:
+        return np.array([], dtype=np.int32)
+
+    finite_rows = np.all(np.isfinite(score4d), axis=1)
+    kmax = np.zeros(score4d.shape[0], dtype=np.int32)
+    kmax[finite_rows] = np.argmax(score4d[finite_rows], axis=1)
+
+    # Default: Other, including rows with invalid/non-finite scores.
+    cat = np.zeros(score4d.shape[0], dtype=np.int32)
+
+    cat[
+        finite_rows
+        & (kmax == COL_TTH)
+        & (score4d[:, COL_TTH] > c_tth)
+    ] = CAT_TTH
+
+    cat[
+        finite_rows
+        & (kmax == COL_VH)
+        & (score4d[:, COL_VH] > c_vh)
+    ] = CAT_VH
+
+    cat[
+        finite_rows
+        & (kmax == COL_GGFVBF)
+        & (score4d[:, COL_GGFVBF] > c_ggfvbf)
+    ] = CAT_GGFVBF
+
+    return cat
+
+
+# =============================================================================
+# 5. Evaluation with one common Bkg-MC scale factor
+# =============================================================================
+
+def evaluate_bins(sig, bkg, norm, c_tth, c_vh, c_ggfvbf):
+    """
+    S_i = weighted yield of all four Higgs processes in SR/category i.
+    alpha = N(Data SB) / weighted yield(Bkg MC SB), common to all categories.
+    B_i = alpha * weighted yield(Bkg MC SR/category i).
+    """
+    if not norm["valid"]:
+        empty_results = {
+            cat: {
+                "S": 0.0, "sigma_S": 0.0,
+                "N_bkg_sr": 0, "Y_bkg_sr": 0.0,
+                "sigma_Y_bkg_sr": 0.0, "neff_bkg_sr": 0.0,
+                "B": 0.0, "sigma_B": 0.0,
+                "Z": 0.0, "sigma_Z": 0.0, "valid": False,
+            }
+            for cat in CATS
+        }
+        return empty_results
+
+    sig_cat = assign_cat(sig.score, c_tth, c_vh, c_ggfvbf)
+    bkg_cat = assign_cat(bkg.score, c_tth, c_vh, c_ggfvbf)
+
+    sig_sr_mask = np.isfinite(sig.mass) & in_sr_mass(sig.mass)
+    bkg_sr_mask = np.isfinite(bkg.mass) & in_sr_mass(bkg.mass)
+
+    results = {}
+
+    for ci, cat in enumerate(CATS):
+        # All Higgs production modes contribute to S.
+        sig_sel = sig_sr_mask & (sig_cat == ci)
+        sig_info = yield_info(sig.weight[sig_sel])
+
+        # Background MC SR yield in this GNN category.
+        bkg_sel = bkg_sr_mask & (bkg_cat == ci)
+        bkg_info = yield_info(bkg.weight[bkg_sel])
+
+        y_bkg_sr = bkg_info["sum"]
+        sigma_y_bkg_sr = bkg_info["err"]
+
+        b_value = norm["alpha"] * y_bkg_sr
+        sigma_b_alpha = y_bkg_sr * norm["sigma_alpha"]
+        sigma_b_mc = norm["alpha"] * sigma_y_bkg_sr
+        sigma_b = float(np.hypot(sigma_b_alpha, sigma_b_mc))
+
+        valid = (
+            sig_info["sum"] >= 0.0
+            and b_value > 0.0
+            and np.isfinite(b_value)
+        )
+
+        z = asimov_z(sig_info["sum"], b_value) if valid else 0.0
+
+        if valid and z > 0.0:
+            log_term = np.log1p(sig_info["sum"] / b_value)
+            dz_ds = log_term / z
+            dz_db = (log_term - sig_info["sum"] / b_value) / z
+            sigma_z = float(np.hypot(
+                dz_ds * sig_info["err"],
+                dz_db * sigma_b,
+            ))
+        else:
+            sigma_z = 0.0
+
+        results[cat] = {
+            "S": sig_info["sum"],
+            "sigma_S": sig_info["err"],
+            "N_signal": sig_info["n"],
+            "N_signal_negative_weights": sig_info["nneg"],
+            "N_bkg_sr": bkg_info["n"],
+            "Y_bkg_sr": y_bkg_sr,
+            "sigma_Y_bkg_sr": sigma_y_bkg_sr,
+            "neff_bkg_sr": bkg_info["neff"],
+            "nneg_bkg_sr": bkg_info["nneg"],
+            "B": float(b_value),
+            "sigma_B": sigma_b,
+            "sigma_B_from_alpha": float(abs(sigma_b_alpha)),
+            "sigma_B_from_SR_MC": float(abs(sigma_b_mc)),
+            "Z": z,
+            "sigma_Z": sigma_z,
+            "valid": valid,
+        }
+
+    return results
+
+
+# =============================================================================
+# 6. Diagnostics and printing
+# =============================================================================
+
+def print_loaded_files(title, infos):
+    print(f"\n{title} file coverage:")
+    for process, info in infos.items():
+        missing = ",".join(info["missing_eras"]) if info["missing_eras"] else "-"
+        print(
+            f"  {process:<34s} files={info['files']:2d} "
+            f"missing_eras={missing}"
+        )
+
+
+def print_process_diagnostics(process_sets, parity, label):
+    """Print per-process SR/SB yields after selecting one eta-fold parity."""
+    print(f"\nBackground process diagnostics ({label}, parity={parity})")
+    header = (
+        f"{'Process':34s}"
+        f"{'N_SR':>9s}{'Y_SR':>13s}{'err_SR':>12s}{'Neff_SR':>11s}"
+        f"{'N_SB':>9s}{'Y_SB':>13s}{'err_SB':>12s}{'Neff_SB':>11s}"
+    )
+    print(header)
+    print("-" * len(header))
+
+    for process, all_events in process_sets.items():
+        events = select_parity(all_events, parity)
+        finite = np.isfinite(events.mass)
+        sr = finite & in_sr_mass(events.mass)
+        sb = finite & in_sb_mass(events.mass)
+
+        ysr = yield_info(events.weight[sr])
+        ysb = yield_info(events.weight[sb])
+
+        print(
+            f"{process:34s}"
+            f"{ysr['n']:9d}{ysr['sum']:13.4f}{ysr['err']:12.4f}{ysr['neff']:11.1f}"
+            f"{ysb['n']:9d}{ysb['sum']:13.4f}{ysb['err']:12.4f}{ysb['neff']:11.1f}"
+        )
+
+
+def print_normalization(title, norm):
+    print(f"\n{title} — common Bkg-MC normalization")
+    print("-" * 76)
+    print(f"  N(Data SB)       = {norm['N_data_sb']}")
+    print(f"    lower/upper    = {norm['N_data_sb_low']} / {norm['N_data_sb_high']}")
+    print(f"  N(Bkg MC SB)     = {norm['N_bkg_sb']}")
+    print(f"  Y(Bkg MC SB)     = {norm['Y_bkg_sb']:.6f}")
+    print(f"    lower/upper    = {norm['Y_bkg_sb_low']:.6f} / {norm['Y_bkg_sb_high']:.6f}")
+    print(f"  alpha lower/upper = {norm['alpha_sb_low']:.6f} / {norm['alpha_sb_high']:.6f}")
+    print(f"  sigma(Y_Bkg SB)  = {norm['sigma_Y_bkg_sb']:.6f}")
+    print(f"  Neff(Bkg MC SB)  = {norm['neff_bkg_sb']:.2f}")
+    print(f"  Nneg(Bkg MC SB)  = {norm['nneg_bkg_sb']}")
+    print(f"  alpha            = {norm['alpha']:.8f}")
+    print(f"  sigma(alpha)     = {norm['sigma_alpha']:.8f}")
+    print(f"  valid            = {norm['valid']}")
+    print("-" * 76)
+
+
+def print_bins(title, results, norm, c_tth, c_vh, c_ggfvbf):
+    z_total, sigma_z_total = combined_z(results, norm)
+
+    print("\n" + "=" * 142)
+    print(
+        f"{title}: c_ttH={c_tth:.5f}, c_VH={c_vh:.5f}, "
+        f"c_ggFVBF={c_ggfvbf:.5f}"
+    )
+    print(
+        f"Common alpha={norm['alpha']:.6f} "
+        f"(N_Data_SB={norm['N_data_sb']}, Y_Bkg_SB={norm['Y_bkg_sb']:.4f})"
+    )
+    print("=" * 142)
+
+    header = (
+        f"{'Category':12s}"
+        f"{'S':>11s}{'sigS':>10s}"
+        f"{'N_BkgSR':>10s}{'Y_BkgSR':>13s}{'sigY_BkgSR':>13s}"
+        f"{'B':>12s}{'sigB':>11s}"
+        f"{'Z':>11s}{'sigZ':>11s}"
+    )
+    print(header)
+    print("-" * len(header))
+
+    for cat in CATS:
+        r = results[cat]
+        print(
+            f"{cat:12s}"
+            f"{r['S']:11.4f}{r['sigma_S']:10.4f}"
+            f"{r['N_bkg_sr']:10d}{r['Y_bkg_sr']:13.4f}"
+            f"{r['sigma_Y_bkg_sr']:13.4f}"
+            f"{r['B']:12.4f}{r['sigma_B']:11.4f}"
+            f"{r['Z']:11.5f}{r['sigma_Z']:11.5f}"
+        )
+
+    print("-" * len(header))
+    print(
+        f"Combined Z = {z_total:.6f} ± {sigma_z_total:.6f} "
+        f"(four categories; shared-alpha correlation included in sigma_Z)"
+    )
+
+
+# =============================================================================
+# 7. Bayesian optimisation (validation -> three cuts)
+# =============================================================================
+
+def optimize_bayesian(sig_val, bkg_val, norm_val, label=""):
+    if optuna is None:
+        raise RuntimeError(
+            "Optuna is not available; use --no-optuna with the three cut values."
+        )
+
+    if not norm_val["valid"]:
+        raise RuntimeError(
+            f"{label}: invalid validation alpha. "
+            "Check Data SB and weighted Bkg MC SB before optimisation."
+        )
+
+    def objective(trial):
+        c_tth = trial.suggest_float("c_tth", CUT_MIN, CUT_MAX)
+        c_vh = trial.suggest_float("c_vh", CUT_MIN, CUT_MAX)
+        c_ggfvbf = trial.suggest_float("c_ggfvbf", CUT_MIN, CUT_MAX)
+
+        results = evaluate_bins(
+            sig_val, bkg_val, norm_val, c_tth, c_vh, c_ggfvbf
+        )
+        z, _ = combined_z(results, norm_val)
+
+        # Invalid alpha is handled before entering Optuna.
+        # Empty/negative-background categories contribute Z=0, not infinity.
+        return z if np.isfinite(z) and z > 0.0 else -1.0
+
+    sampler = optuna.samplers.TPESampler(
+        seed=RANDOM_STATE,
+        n_startup_trials=N_STARTUP_TRIALS,
+    )
+    study = optuna.create_study(direction="maximize", sampler=sampler)
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+    print(f"\nBayesian optimisation {label}: {N_TRIALS} trials (3 cuts jointly)...")
+    study.optimize(
+        objective,
+        n_trials=N_TRIALS,
+        n_jobs=1,
+        show_progress_bar=True,
+    )
+
+    completed = [
+        t for t in study.trials
+        if t.state == optuna.trial.TrialState.COMPLETE
+        and t.value is not None
+        and t.value > 0.0
+    ]
+    if not completed:
+        raise RuntimeError(
+            f"No valid Optuna trial for {label}. "
+            "Check yields or try diagnostic-only first."
+        )
+
+    best = max(completed, key=lambda t: t.value)
+    return (
+        float(best.params["c_tth"]),
+        float(best.params["c_vh"]),
+        float(best.params["c_ggfvbf"]),
+        study,
+    )
+
+
+# =============================================================================
+# 8. Main
+# =============================================================================
+
+def main():
+    global N_TRIALS
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--no-optuna",
+        action="store_true",
+        help="Skip optimisation and use the supplied three cut values.",
+    )
+    parser.add_argument(
+        "--diagnostic-only",
+        action="store_true",
+        help="Load samples and print SR/SB/alpha diagnostics; do not optimise.",
+    )
+    parser.add_argument("--c-tth", type=float, default=0.3)
+    parser.add_argument("--c-vh", type=float, default=0.3)
+    parser.add_argument("--c-ggfvbf", type=float, default=0.3)
+    parser.add_argument("--trials", type=int, default=N_TRIALS)
+    parser.add_argument(
+        "--weight-branch",
+        type=str,
+        default=DEFAULT_WEIGHT_BRANCH,
+        choices=["weight_lumi_avg", "weight_lumi"],
+        help="MC weight branch. Default: weight_lumi_avg (Step2 Z-weight convention).",
+    )
+    args = parser.parse_args()
+    N_TRIALS = args.trials
+
+    if not (0.0 <= args.c_tth <= 1.0
+            and 0.0 <= args.c_vh <= 1.0
+            and 0.0 <= args.c_ggfvbf <= 1.0):
+        parser.error("All cut values must be between 0 and 1.")
+
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    print("=" * 100)
+    print("4-CATEGORY SCHEME: all-Higgs signal + Bkg-MC sideband scaling")
+    print("=" * 100)
+    print(f"Signal processes: {SIGNAL_DIRS}")
+    print(f"Background processes: {BKG_DIRS}")
+    print(f"MC weight branch: {args.weight_branch}")
+    print(f"Categories: {CATS}")
+    print(f"SR: ({MASS_LO}, {MASS_HI}) GeV")
+    print(f"SB: [{SB_LO1}, {SB_HI1}) U [{SB_LO2}, {SB_HI2}] GeV")
+    print("Background normalization: one common alpha per parity/split.")
+    print("CR Data is not used.")
+    print(
+        "WARNING: verify that DYG mass-point samples and DYJetsToLL_Stitch "
+        "do not overlap before interpreting the total background."
+    )
+
+    fold_results = {}
+    csv_rows = []
+
+    for fold_idx in range(4):
+        val_parity = VALID_PARITY[fold_idx]
+        test_parity = TEST_PARITY[fold_idx]
+
+        print("\n" + "=" * 90)
+        print(
+            f"FOLD {fold_idx}: validation parity={val_parity}, "
+            f"test parity={test_parity}"
+        )
+        print("=" * 90)
+
+        print("\nLoading all Higgs signal processes...")
+        sig_all, sig_infos = load_signal_all(fold_idx, args.weight_branch)
+        print(f"  Total Signal MC events loaded: {sig_all.n}")
+        print_loaded_files("Signal", sig_infos)
+
+        print("\nLoading all seven Background MC processes...")
+        bkg_all, bkg_process_sets, bkg_infos = load_background_all(
+            fold_idx, args.weight_branch
+        )
+        print(f"  Total Background MC events loaded: {bkg_all.n}")
+        print_loaded_files("Background", bkg_infos)
+
+        print("\nLoading nominal Data sideband...")
+        data_sb_all, data_info = load_data_sideband(fold_idx)
+        print(
+            f"  Data SB events loaded: {data_sb_all.n}; "
+            f"files={data_info['files']}; "
+            f"missing eras={data_info['missing_eras']}"
+        )
+
+        # Split each population into the validation and test parity.
+        sig_val = select_parity(sig_all, val_parity)
+        sig_test = select_parity(sig_all, test_parity)
+        bkg_val = select_parity(bkg_all, val_parity)
+        bkg_test = select_parity(bkg_all, test_parity)
+        data_sb_val = select_parity(data_sb_all, val_parity)
+        data_sb_test = select_parity(data_sb_all, test_parity)
+
+        print(
+            f"\nValidation events: Signal={sig_val.n}, "
+            f"BkgMC={bkg_val.n}, DataSB={data_sb_val.n}"
+        )
+        print(
+            f"Test events:       Signal={sig_test.n}, "
+            f"BkgMC={bkg_test.n}, DataSB={data_sb_test.n}"
+        )
+
+        # Print process-level yields for both parity subsets.
+        print_process_diagnostics(
+            bkg_process_sets, val_parity, "validation"
+        )
+        print_process_diagnostics(
+            bkg_process_sets, test_parity, "test"
+        )
+
+        # Alpha is independent of the three GNN cuts, so calculate it once.
+        # Validation and test use disjoint parities and therefore have
+        # separately measured sideband normalisations.
+        norm_val = compute_normalization(data_sb_val, bkg_val)
+        norm_test = compute_normalization(data_sb_test, bkg_test)
+
+        print_normalization(f"FOLD {fold_idx} VALIDATION", norm_val)
+        print_normalization(f"FOLD {fold_idx} TEST", norm_test)
+
+        if args.diagnostic_only:
+            print("\n[diagnostic-only] Skipping cut optimisation and Z evaluation.")
+            continue
+
+        if not norm_val["valid"]:
+            raise RuntimeError(
+                f"Fold {fold_idx}: invalid validation alpha; stop before optimisation."
+            )
+        if not norm_test["valid"]:
+            raise RuntimeError(
+                f"Fold {fold_idx}: invalid test alpha; stop before test evaluation."
+            )
+
+        if args.no_optuna:
+            c_tth = args.c_tth
+            c_vh = args.c_vh
+            c_ggfvbf = args.c_ggfvbf
+            study = None
+            print(
+                f"\n[no-optuna] Using fixed cuts: "
+                f"ttH={c_tth}, VH={c_vh}, ggFVBF={c_ggfvbf}"
+            )
+        else:
+            c_tth, c_vh, c_ggfvbf, study = optimize_bayesian(
+                sig_val, bkg_val, norm_val, label=f"fold{fold_idx} validation"
+            )
+
+        # Validation result with the optimised cuts.
+        val_results = evaluate_bins(
+            sig_val, bkg_val, norm_val, c_tth, c_vh, c_ggfvbf
+        )
+        print_bins(
+            f"FOLD {fold_idx} VALIDATION",
+            val_results, norm_val, c_tth, c_vh, c_ggfvbf,
+        )
+        z_val, sigma_z_val = combined_z(val_results, norm_val)
+
+        # Independent test evaluation; do not optimise on test.
+        test_results = evaluate_bins(
+            sig_test, bkg_test, norm_test, c_tth, c_vh, c_ggfvbf
+        )
+        print_bins(
+            f"FOLD {fold_idx} TEST",
+            test_results, norm_test, c_tth, c_vh, c_ggfvbf,
+        )
+        z_test, sigma_z_test = combined_z(test_results, norm_test)
+
+        fold_results[fold_idx] = {
+            "c_tth": c_tth,
+            "c_vh": c_vh,
+            "c_ggfvbf": c_ggfvbf,
+            "norm_val": norm_val,
+            "norm_test": norm_test,
+            "val_results": val_results,
+            "test_results": test_results,
+            "Z_val": z_val,
+            "sigma_Z_val": sigma_z_val,
+            "Z_test": z_test,
+            "sigma_Z_test": sigma_z_test,
+        }
+
+        for split_name, results, norm in (
+            ("validation", val_results, norm_val),
+            ("test", test_results, norm_test),
+        ):
+            for cat in CATS:
+                r = results[cat]
+                csv_rows.append({
+                    "fold": fold_idx,
+                    "split": split_name,
+                    "category": cat,
+                    "c_tth": c_tth,
+                    "c_vh": c_vh,
+                    "c_ggfvbf": c_ggfvbf,
+                    "N_data_sb": norm["N_data_sb"],
+                    "N_data_sb_low": norm["N_data_sb_low"],
+                    "N_data_sb_high": norm["N_data_sb_high"],
+                    "N_bkg_sb": norm["N_bkg_sb"],
+                    "Y_bkg_sb": norm["Y_bkg_sb"],
+                    "Y_bkg_sb_low": norm["Y_bkg_sb_low"],
+                    "Y_bkg_sb_high": norm["Y_bkg_sb_high"],
+                    "alpha_sb_low": norm["alpha_sb_low"],
+                    "alpha_sb_high": norm["alpha_sb_high"],
+                    "sigma_Y_bkg_sb": norm["sigma_Y_bkg_sb"],
+                    "alpha": norm["alpha"],
+                    "sigma_alpha": norm["sigma_alpha"],
+                    "S": r["S"],
+                    "sigma_S": r["sigma_S"],
+                    "N_bkg_sr": r["N_bkg_sr"],
+                    "Y_bkg_sr": r["Y_bkg_sr"],
+                    "sigma_Y_bkg_sr": r["sigma_Y_bkg_sr"],
+                    "B": r["B"],
+                    "sigma_B": r["sigma_B"],
+                    "Z": r["Z"],
+                    "sigma_Z": r["sigma_Z"],
+                })
+
+        # Save Optuna history for reproducibility.
+        if study is not None:
+            study.trials_dataframe().to_csv(
+                OUT_DIR / f"optuna_fold{fold_idx}.csv", index=False
+            )
+
+    if args.diagnostic_only:
+        print("\nDiagnostic completed. No optimisation or final Z was run.")
+        print(f"Output directory: {OUT_DIR}")
+        return
+
+    if len(fold_results) != 4:
+        raise RuntimeError(
+            f"Expected four completed folds, got {len(fold_results)}"
+        )
+
+    # Four test parities are disjoint; combine their fold-level significances.
+    z_final = float(np.sqrt(sum(
+        r["Z_test"] ** 2 for r in fold_results.values()
+    )))
+
+    # Fold-level errors are treated as independent because test parities
+    # are disjoint. Within each fold, common-alpha correlations are included.
+    sigma_final = float(np.sqrt(sum(
+        ((r["Z_test"] / z_final) * r["sigma_Z_test"]) ** 2
+        for r in fold_results.values()
+        if z_final > 0.0
+        and np.isfinite(r["sigma_Z_test"])
+    )))
+
+    print("\n" + "=" * 100)
+    print("PER-FOLD SUMMARY")
+    print("=" * 100)
+    header = (
+        f"{'Fold':<7}{'c_ttH':>10}{'c_VH':>10}{'c_ggFVBF':>12}"
+        f"{'alpha_val':>13}{'alpha_test':>13}"
+        f"{'Z_val':>13}{'Z_test':>13}{'sigmaZ_test':>14}"
+    )
+    print(header)
+    print("-" * len(header))
+
+    for fold_idx, result in fold_results.items():
+        print(
+            f"{fold_idx:<7}"
+            f"{result['c_tth']:10.5f}"
+            f"{result['c_vh']:10.5f}"
+            f"{result['c_ggfvbf']:12.5f}"
+            f"{result['norm_val']['alpha']:13.6f}"
+            f"{result['norm_test']['alpha']:13.6f}"
+            f"{result['Z_val']:13.6f}"
+            f"{result['Z_test']:13.6f}"
+            f"{result['sigma_Z_test']:14.6f}"
+        )
+
+    print("-" * len(header))
+    print(f"\n4-fold combined Test Z = {z_final:.6f} ± {sigma_final:.6f}")
+    print(
+        "  = sqrt("
+        + " + ".join(
+            f"{r['Z_test']:.5f}^2" for r in fold_results.values()
+        )
+        + ")"
+    )
+
+    # Write text summary.
+    report_path = OUT_DIR / "final_z.txt"
+    with report_path.open("w", encoding="utf-8") as report:
+        report.write("4-category Bkg-MC sideband-scaled significance\n")
+        report.write(f"Weight branch: {args.weight_branch}\n")
+        report.write(
+            f"SR: ({MASS_LO}, {MASS_HI}); "
+            f"SB: [{SB_LO1}, {SB_HI1}) U [{SB_LO2}, {SB_HI2}]\n"
+        )
+        report.write("One common alpha per fold split, shared by four categories.\n\n")
+        report.write(header + "\n")
+        for fold_idx, result in fold_results.items():
+            report.write(
+                f"{fold_idx:<7}"
+                f"{result['c_tth']:10.5f}"
+                f"{result['c_vh']:10.5f}"
+                f"{result['c_ggfvbf']:12.5f}"
+                f"{result['norm_val']['alpha']:13.6f}"
+                f"{result['norm_test']['alpha']:13.6f}"
+                f"{result['Z_val']:13.6f}"
+                f"{result['Z_test']:13.6f}"
+                f"{result['sigma_Z_test']:14.6f}\n"
+            )
+        report.write(f"\n4-fold combined Test Z = {z_final:.6f} +/- {sigma_final:.6f}\n")
+
+        for fold_idx, result in fold_results.items():
+            report.write(f"\nFOLD {fold_idx} TEST CATEGORY RESULTS\n")
+            report.write(
+                f"alpha={result['norm_test']['alpha']:.8f}, "
+                f"sigma_alpha={result['norm_test']['sigma_alpha']:.8f}\n"
+            )
+            for cat in CATS:
+                r = result["test_results"][cat]
+                report.write(
+                    f"{cat:10s} S={r['S']:.6f} +/- {r['sigma_S']:.6f} "
+                    f"B={r['B']:.6f} +/- {r['sigma_B']:.6f} "
+                    f"Z={r['Z']:.6f} +/- {r['sigma_Z']:.6f}\n"
+                )
+
+    # Write category-level CSV.
+    csv_path = OUT_DIR / "category_yields.csv"
+    if csv_rows:
+        with csv_path.open("w", newline="", encoding="utf-8") as csv_file:
+            writer = csv.DictWriter(csv_file, fieldnames=list(csv_rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(csv_rows)
+
+    print(f"\nReport: {report_path}")
+    print(f"Category yields: {csv_path}")
+    print(f"Output directory: {OUT_DIR}")
+
+
+if __name__ == "__main__":
+    main()

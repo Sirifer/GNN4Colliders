@@ -1,0 +1,257 @@
+HZγ ttH 4-class v3 (Mll80to100) GNN Workflow
+============================================
+更新日期: 2026-11-03
+
+本文件记录从 v2（2-class ttH vs other, Run3）升级到 v3（4-class, Run2+Run3 全样本,
+CR sideband 算 Z）的完整数据准备 / 训练 / 推理 / 显著性 workflow。
+旧的 2-class 总结见 hzg_ttH_GNN_workflow.txt。
+
+
+一、v3 相对 v2 的关键变化
+-------------------------
+1. 分类从 2-class 升级到 4-class:
+     class 0  bkg        TT + DYGto2LG(5个质量点) + DYJetsToLL_Stitch
+     class 1  ttH
+     class 2  VH
+     class 3  ggF + VBF  (两个信号样本合并成一类)
+   loss 用 CrossEntropyLoss, out_size=4, finish=Softmax(dim=1)。
+
+2. 样本范围: Run2(2016/2017/2018) + Run3(2022-2026) 全部 11 个 era。data 也是。
+   不是每个 bkg 都有全部 era(如 DYGto2LG_100to200 只有 4 个 Run3 era),脚本按实际
+   存在的文件处理,不硬编码 era。
+
+3. bkg 集合扩大: 旧版只有 TT + DYGto2LG_10to100,现在加上 DYG 其他 4 个质量点
+   (100to200/200to400/400to600/600) + DYJetsToLL_Stitch。
+
+4. 训练仍用 5 个分析 category (ttHhad/ttHlep/untag/VH3l/VHpTmiss) 的 SR+Sideband,
+   Sideband 参与训练。ggF/VBF 只是信号"样本"名,事件落进的分析 category 还是这 5 个。
+
+5. Z 计算: 用 CR(control region) 的 sideband。v3 的 CR 现在带 _SB 版本
+   (CR_lowIDMVA_SB__<cat>), 旧版 CR 只有 __inclusive 没有 sideband。
+   本期 Z 计算只用 CR_lowIDMVA_SB 一种 cr_type。训练不用 CR。
+
+6. m_ll 窗口: v3 文件名带 Mll80to100,但 merge 用 5 个 category 的 SR+Sideband tree,
+   pt_only 用 m_llg 做除法,和 v2 一致。
+
+
+二、目录与路径约定
+-----------------
+REPO = /scratchfs2/cms/huangsuyun/GNN4Colliders
+PYTHON = /publicfs/cms/user/huangsuyun/conda/envs/pytorch/bin/python
+DGL   = REPO/root_gnn_dgl
+
+v3 原始样本:  /publicfs/cms/user/laipeizhu/Eos/HZgamma/root_p2root_v3_Mll80to100
+              ├─ Signal/{ggF,ttH,VBF,VH}/<era>.root
+              ├─ Bkg_MC/{TT, DYGto2LG_*, DYJetsToLL_Stitch, ...}/<era>.root
+              └─ Data/Data/<era>.root
+
+中间产物:
+  root_p2root_v3_merged       (merge 输出, 含 source_tree_tag/weight_lumi_abs/photon_eta_fold)
+  root_p2root_v3_pt_only      (pt_only 输出, 含 _div_mllg + weight_lumi_avg)
+  graphs/hzg/ttH_4class_4fold (prep 输出, DGL graph cache)
+  trainings/hzg/ttH_4class_4fold_fold<k>  (训练 checkpoint + log)
+  root_p2root_v3_pt_only_scored_ttH_4class_4fold_fold<k>   (MC 推理得分)
+  root_p2root_v3_pt_only_scored_ttH_4class_4fold_data_fold<k>  (Data 推理得分)
+
+
+三、第一步: 数据准备 (两个脚本, 已写好并验证)
+---------------------------------------------
+脚本位置: REPO/tools/code/
+
+1. merge_trees_v3.py
+   功能: 把 v3 原始样本白名单内 12 个目录(4 信号 + 7 bkg + Data/Data)的每个 .root
+   文件, 合并 5 个 category 的 SR__<cat> + Sideband__<cat> 成单个 tree
+   "merged_SR_Sideband", 输出到 root_p2root_v3_merged, 保持目录结构。
+   每个事件额外写入:
+     source_tree_tag (int32): 0/2/4/6/8=SR_{ttHhad,ttHlep,untag,VH3l,VHpTmiss}
+                              1/3/5/7/9=对应 Sideband
+     weight_lumi_abs (float32): |weight_lumi|
+     photon_eta_fold (int32): floor(photon_eta*10000)  ← fold 变量, 旧版要单独跑
+                              add_photon_eta_fold.py, 现在合进 merge 省 I/O
+     class_tag (int32): 样本所属 4-class (同文件同值, 按样本目录决定)
+                              0=bkg  1=ttH  2=VH  3=ggF/VBF  -1=Data(不训练)
+                              与 config 里 per-dataset label 一致, 下游可按 class 分组
+                              无需从文件路径重新判断。和 source_tree_tag(按 region 分的
+                              0-9) 不同, class_tag 是按样本/class 分的。
+   关键: tree key 用 set 精确匹配, 不会误捡 SR__VBF_JES_up 等系统性变体 tree。
+   不处理 CR(CR 只用于 Z 计算, 结构不同, 留到第 3 步)。
+
+   用法:
+     $PYTHON merge_trees_v3.py --manifest merge_trees_v3_status.txt
+     # 可先 --dry-run 看文件清单(已验证 100 个文件, 12 目录)
+
+2. prepare_pt_only_inputs_v3.py
+   功能: 读 root_p2root_v3_merged, 输出 root_p2root_v3_pt_only。
+   Pass 1: 扫全部文件, 按样本目录算 mean(weight_lumi) (同 process 全 era 共用一个常数,
+           跨 Run2+Run3 全部 era)。Data 的 weight_lumi 在 v3 里是 1.0, 也正常处理。
+   Pass 2: 每个 pt 分支加 _div_mllg = pT/m_llg 派生分支
+           (lep0-5, photon, jet0-5, bjet0-1, MET, 共 16 个), 加 weight_lumi_avg(float32),
+           透传其余分支。旧版 weight_lumi_avg 要单独跑 add_avg_weight_and_check.py,
+           现在合进 pt_only。
+   输入方案沿用旧 pt_only: config 里 lep/photon 用 _div_mllg, jet/bjet/MET 用 raw pt
+   (partial decorr)。脚本保留全部 _div_mllg 供后续 full_decorr 实验用。
+
+   用法:
+     $PYTHON prepare_pt_only_inputs_v3.py
+     # 拒绝覆盖已存在输出目录(安全保护)
+
+   生成器: gen_4class_4fold_configs_jobs.py (生成下面所有 config + job)
+
+
+四、第二步: config + job (4-fold, 已生成 20 个文件)
+---------------------------------------------------
+生成: $PYTHON tools/code/gen_4class_4fold_configs_jobs.py
+
+config: DGL/configs/hzg/ttH_4class_4fold_fold{0,1,2,3}.yaml
+  - Model: Edge_Network, out_size=4, in_size=6, hid_size=64, n_layers=4, n_proc_steps=4
+  - Loss: CrossEntropyLoss, finish=Softmax(dim=1)
+  - 4 个 dataset(YAML merge key 共享定义):
+      ttH(label=1) VH(label=2) ggF_VBF(label=3) bkg(label=0)
+  - raw_dir=root_p2root_v3_pt_only, tree_name=merged_SR_Sideband
+  - weight_var=weight_lumi_avg, fold_var=photon_eta_fold
+  - node 输入 16 节点 × 6 特征, 同旧 4fold
+  - fold 轮转(同旧 4fold):
+      fold0: test=[0] train=[1,2,3]
+      fold1: test=[1] train=[0,2,3]
+      fold2: test=[2] train=[0,1,3]
+      fold3: test=[3] train=[0,1,2]
+  - chunks: ttH=4, VH=4, ggF_VBF=8, bkg=32 (bkg 含大 Stitch 文件)
+
+job: DGL/jobs/{prep_data,training,inference}/hzg_ttH_4class_4fold_*
+  - prep_data/hzg_ttH_4class_4fold_fold<k>_prep.sbatch
+      4 dataset 各自 chunks 数, 先 raw 再 shuffle
+  - training/hzg_ttH_4class_4class_fold<k>.sbatch
+      srun training_script.py --preshuffle --nocompile --lazy --restart
+  - inference/hzg_ttH_4class_4fold_fold<k>_inference.sbatch
+      MC 推理 89 个文件/fold, --branch_name ttH_gnn_score
+      (多分类下 inference.py 自动写成 vector<float> 分支, 4 个 class 的 softmax)
+  - inference/hzg_ttH_4class_4fold_inference_data_fold<k>.sbatch
+      Data 推理 11 个 era/fold, 从 root_p2root_v3_pt_only 读
+
+提交顺序(每个 fold, 串行依赖):
+  sbatch jobs/prep_data/hzg_ttH_4class_4fold_fold0_prep.sbatch
+  # prep 完成后:
+  sbatch jobs/training/hzg_ttH_4class_4fold_fold0.sbatch
+  # 训练完成(100 epoch)后:
+  sbatch jobs/inference/hzg_ttH_4class_4fold_fold0_inference.sbatch
+  sbatch jobs/inference/hzg_ttH_4class_4fold_inference_data_fold0.sbatch
+
+4 个 fold 可并行提交(只要 prep 各自完成)。最终 OOF: 每个事件只用没见过它的模型推理。
+
+
+五、第三步: 方法二 Z 计算 (CR_lowIDMVA data-driven 背景估计) —— 完整流程
+----------------------------------------------------------------
+借鉴 tools/significance_4fold.py 的 4-fold OOF + val/test + 3-category 分箱 +
+Asimov Z + 平方和合并结构, 但把 B(背景) 从 MC counting 换成 CR transfer factor。
+
+5.1 方法二核心公式 (用户定义)
+  alpha(cat, R) = N_Data_SB(cat, R) / N_CR_SB(cat, R)
+  B_CR_SR(cat, R) = alpha(cat, R) × N_CR_SR(cat, R)
+  其中:
+    N_Data_SB : nominal Data 的 sideband 事件数 (merged_SR_Sideband, source_tree_tag 奇)
+    N_CR_SB   : CR Data 的 sideband 事件数 (merged_CR_lowIDMVA, source_tree_tag 5-9)
+    N_CR_SR   : CR Data 的 SR 区事件数 (merged_CR_lowIDMVA, source_tree_tag 0-4, m_llg 120-130)
+  R = GNN score 区 (low/medium/high), 由 val 集优化边界 c1/c2 决定。
+  S(信号) 仍来自 ttH MC 的 OOF 推理 (用 weight_lumi_avg 加权)。
+
+5.2 数据来源 (都已就绪)
+  nominal MC scored: root_p2root_v3_pt_only_scored_ttH_4class_4fold_fold<k>/Signal|Bkg_MC/...
+    → S 信号 + (旧版 B 对照, 方法二不用 MC 的 B)
+  nominal Data scored: root_p2root_v3_pt_only_scored_ttH_4class_4fold_data_fold<k>/Data/Data/
+    → N_Data_SB 分母 (tree=merged_SR_Sideband, is_SR==0 选 sideband)
+  CR Data scored: root_p2root_v3_cr_pt_only_scored_ttH_4class_4fold_fold<k>/Data/Data/
+    → N_CR_SR + N_CR_SB (tree=merged_CR_lowIDMVA, source_tree_tag 0-4=SR, 5-9=SB)
+
+5.3 multiclass score 取哪一维
+  4-class 推理 score 是 vector<float>(4): [bkg, ttH, VH, ggF_VBF] (label 顺序 0/1/2/3)。
+  Z 时取 ttH 那一维 (index 1) 作 discriminant, 和 nominal significance_4fold.py 一致
+  (旧版 ttH_gnn_score 就是 ttH 分数; multiclass 下取 softmax[:,1])。
+  ★ uproot 读 vector<float> 是 object dtype 1D array, 要 np.stack 成 (N,4) 再 [:,1]。
+
+5.4 OOF 选分 (和 nominal 同策略, CR 必须遵守)
+  每个事件用 photon_eta_fold % 4 = parity 选 fold 目录的分数 (parity k → fold{k}, 即没见过它的模型)。
+  nominal 和 CR 都按这个选, 所以两边都要 4 fold 目录 (已齐)。
+  fold 轮转: fold0 test=[0] val=[1] train=[2,3]  ...  (同旧 4fold)。
+  最终 combined Z = sqrt( Z0^2 + Z1^2 + Z2^2 + Z3^2 )。
+
+5.5 ★ nominal 和 CR 的 source_tree_tag 布局不同, 选事件逻辑要分开
+  nominal (merged_SR_Sideband): SR/SB 交替, 偶=SR, 奇=SB, tag//2 = category index
+    → 用 is_SR 分支 (==1 SR, ==0 SB) 最稳, 或 tag%2。
+    SR_TAG_MAP (nominal): {0:ttHhad, 2:ttHlep, 4:untag, 6:VH3l, 8:VHpTmiss}, SB = +1。
+  CR (merged_CR_lowIDMVA): 按 region 分组, 0-4=CR SR, 5-9=CR SB, tag%5 = category index
+    → CR SR: tag 0-4 且 m_llg 在 120-130; CR SB: tag 5-9 且 m_llg 在 SB 区。
+    CR_CAT_TAG: {0:ttHhad, 1:ttHlep, 2:untag, 3:VH3l, 4:VHpTmiss} (SR), SB = tag-5。
+  5 个分析 category: ttHhad/ttHlep/untag/VH3l/VHpTmiss, 两边一致。
+  mass 窗口: SR 120-130, SB 110-120 ∪ 130-180 (和 v2 diag_cr_counts_v2.py / significance_4fold.py 一致)。
+
+5.6 Z 脚本流程 (significance_4class_v3_cr.py, 待写, 基于 significance_4fold.py 改)
+  对每个 fold k:
+    a. val_p = VALID_PARITY[k], test_p = TEST_PARITY[k]
+    b. 加载 (OOF 选分):
+       - nominal MC: signal(ttH), bkg(对照) — select SR + parity
+       - nominal Data SB: is_SR==0, 有限 score, parity → data_weights/data_scores (N_Data_SB 用)
+       - CR Data: source_tree_tag 分 SR(0-4)/SB(5-9), m_llg 在窗, parity → cr_sr/cr_sb
+    c. val 集优化 GNN 边界 c1/c2 (optuna, 最大化 val 的 Z):
+       每个分析 category × 每个 score 区(low/med/high):
+         S_cat_R = ttH MC (val, SR, 该 cat, score 在 R) 加权
+         N_Data_SB_cat_R = nominal Data SB (val, 该 cat, score 在 R) 计数
+         N_CR_SB_cat_R   = CR SB (val, 该 cat, score 在 R) 计数
+         alpha = N_Data_SB_cat_R / N_CR_SB_cat_R
+         B_CR_SR_cat_R = alpha × N_CR_SR_cat_R (N_CR_SR 同 cat/R 的 CR SR 计数)
+         Z_cat_R = asimov_z(S_cat_R, B_CR_SR_cat_R)
+       val Z = 5 cat × 3 区 的平方和合并。
+    d. test 集: 用 val 选的 c1/c2, 算 test 的 S / alpha / B_CR_SR / Z_test。
+    e. 误差: B 含 alpha 的统计误差 (N_Data_SB, N_CR_SB, N_CR_SR 三项泊松),
+       传播到 Z (用 significance_4fold.py 的 z_uncertainty 形式, 但 sigma_B 换成 B 传播误差)。
+  最终: combined Z = sqrt(sum_k Z_test_k^2), 误差按 (Z_k/Z_final × sigma_k) 平方和。
+
+5.7 注意事项
+  - CR SB 统计稀: ttHhad/ttHlep/VH3l 单 era 个位数事件 → 要全 era 合并 + 全 fold 才有统计,
+    低统计 bin 的 alpha 不稳, 加 MIN_B_NEFF / 要求 N_CR_SB>0 之类保护 (同旧版 guard)。
+  - 训练用分析 Sideband (Sideband__<cat>), Z 用 CR sideband (CR_lowIDMVA_SB__<cat>),
+    两者不同, 不要混。方法二的 Data_SB 分母用 nominal 的分析 sideband (is_SR==0)。
+  - 不要把 inclusive CR 算进来 (重复计数)。
+  - 信号污染: CR SR 里可能有少量真信号, 高 score 区要注意 (可选 check)。
+  - 方法二的 alpha (transfer factor) 本身不依赖 GNN, 但分箱到 GNN score 区后每个区
+    单独算 alpha, 所以高 score 区 alpha 可能很大 (CR SB 高 score 事件少)。
+
+
+
+六、当前状态 / 下一步
+--------------------
+[完成 + 验证]
+  - 第 1 步 数据准备: merge_trees_v3.py + prepare_pt_only_inputs_v3.py
+    nominal (Signal+Bkg+Data, ~2.31M events) 全跑通。
+  - 第 2 步 config + job: 4 fold config + 16 sbatch 生成并验证。
+  - 第 2 步 训练 + 推理: 4 fold MC + nominal Data 全部出分
+    (root_p2root_v3_pt_only_scored_ttH_4class_4fold_fold<k> + ..._data_fold<k>)。
+  - 第 2 步 CR 数据处理 (方法二独立线):
+      merge_cr_lowIDMVA_v3.py: 11 era, 6621 events, 验证通过 (事件数/tag/分支全对)
+      prepare_pt_only_inputs_v3.py 复用: 11 era, _div_mllg + weight_lumi_avg=1.0, 验证通过
+      CR config + 4 sbatch (gen_cr_lowIDMVA_configs_jobs.py): 生成并验证
+      CR 推理 4 fold: 全部出分 (root_p2root_v3_cr_pt_only_scored_ttH_4class_4fold_fold{0-3})
+        fold0 已验证: 11 era 6621 events, score 4 维 softmax 正确, per-class 均值背景主导
+  - 第 4 步 检查脚本: diag_cr_lowIDMVA_v3.py 写好 (待跑, 已修 score object-array 读取 bug)
+  - 方法二 Z 流程: 第五节已写完整流程
+
+[待跑]
+  - python tools/diag_cr_lowIDMVA_v3.py  (CR 检查 + pre-GNN transfer factor 量级)
+  - python tools/diag_cr_lowIDMVA_v3.py --score-cut 0.5  (加 GNN 区)
+
+[待写]
+  - significance_4class_v3_cr.py: 基于 significance_4fold.py 改,
+    B 换成 B_CR_SR = alpha × N_CR_SR (方法二 transfer factor),
+    per 5 cat × 3 score 区 × 4 fold, Asimov Z, 平方和合并。
+    详见第五节 5.6。等 diag 检查通过后写。
+
+[关键设计决策记录]
+  - 4-class label: bkg=0, ttH=1, VH=2, ggF+VBF=3 (CrossEntropy 多分类路径)
+  - 输入方案: 同旧 pt_only (lep/photon 除 m_llg, jet/bjet/MET raw pt)
+  - fold 轮转: 同旧 4fold; OOF 选分 parity k → fold{k}
+  - era: Run2+Run3 全部 11 个, data 也是
+  - CR: 只用 CR_lowIDMVA (SR + SB 都提), 训练不用, Z 用
+  - 方法二: alpha = N_Data_SB/N_CR_SB, B = alpha × N_CR_SR; S 来自 ttH MC OOF
+  - multiclass Z 取 ttH 维 (softmax[:,1]) 作 discriminant
+  - nominal source_tree_tag SR/SB 交替 (tag//2=cat); CR 按 region 分组 (tag%5=cat) — 两边逻辑分开
+  - photon_eta_fold / weight_lumi_abs 合进 merge; weight_lumi_avg 合进 pt_only (v2 要 4 个脚本, v3 只要 2 个)
+

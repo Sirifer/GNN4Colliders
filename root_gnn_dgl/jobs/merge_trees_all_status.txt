@@ -1,0 +1,12 @@
+status	n_input	n_output	trees_found	trees_nonempty	input	output	message
+DONE	602	602	10	8	/publicfs/cms/user/laipeizhu/Eos/HZgamma/root_p2root_v2/Data/Data/2016postVFP.root	/scratchfs2/cms/huangsuyun/GNN4Colliders/root_p2root_v2_merged_data/Data/2016postVFP.root	602 events
+DONE	677	677	10	9	/publicfs/cms/user/laipeizhu/Eos/HZgamma/root_p2root_v2/Data/Data/2016preVFP.root	/scratchfs2/cms/huangsuyun/GNN4Colliders/root_p2root_v2_merged_data/Data/2016preVFP.root	677 events
+DONE	1526	1526	10	9	/publicfs/cms/user/laipeizhu/Eos/HZgamma/root_p2root_v2/Data/Data/2017.root	/scratchfs2/cms/huangsuyun/GNN4Colliders/root_p2root_v2_merged_data/Data/2017.root	1526 events
+DONE	2207	2207	10	10	/publicfs/cms/user/laipeizhu/Eos/HZgamma/root_p2root_v2/Data/Data/2018.root	/scratchfs2/cms/huangsuyun/GNN4Colliders/root_p2root_v2_merged_data/Data/2018.root	2207 events
+DONE	828	828	10	10	/publicfs/cms/user/laipeizhu/Eos/HZgamma/root_p2root_v2/Data/Data/2022postEE.root	/scratchfs2/cms/huangsuyun/GNN4Colliders/root_p2root_v2_merged_data/Data/2022postEE.root	828 events
+DONE	224	224	10	8	/publicfs/cms/user/laipeizhu/Eos/HZgamma/root_p2root_v2/Data/Data/2022preEE.root	/scratchfs2/cms/huangsuyun/GNN4Colliders/root_p2root_v2_merged_data/Data/2022preEE.root	224 events
+DONE	431	431	10	10	/publicfs/cms/user/laipeizhu/Eos/HZgamma/root_p2root_v2/Data/Data/2023postBPix.root	/scratchfs2/cms/huangsuyun/GNN4Colliders/root_p2root_v2_merged_data/Data/2023postBPix.root	431 events
+DONE	746	746	10	10	/publicfs/cms/user/laipeizhu/Eos/HZgamma/root_p2root_v2/Data/Data/2023preBPix.root	/scratchfs2/cms/huangsuyun/GNN4Colliders/root_p2root_v2_merged_data/Data/2023preBPix.root	746 events
+DONE	4346	4346	10	10	/publicfs/cms/user/laipeizhu/Eos/HZgamma/root_p2root_v2/Data/Data/2024.root	/scratchfs2/cms/huangsuyun/GNN4Colliders/root_p2root_v2_merged_data/Data/2024.root	4346 events
+DONE	4664	4664	10	10	/publicfs/cms/user/laipeizhu/Eos/HZgamma/root_p2root_v2/Data/Data/2025.root	/scratchfs2/cms/huangsuyun/GNN4Colliders/root_p2root_v2_merged_data/Data/2025.root	4664 events
+DONE	1313	1313	10	9	/publicfs/cms/user/laipeizhu/Eos/HZgamma/root_p2root_v2/Data/Data/2026.root	/scratchfs2/cms/huangsuyun/GNN4Colliders/root_p2root_v2_merged_data/Data/2026.root	1313 events

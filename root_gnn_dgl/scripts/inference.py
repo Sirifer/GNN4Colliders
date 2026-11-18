@@ -277,7 +277,7 @@ def main():
             model = utils.buildFromConfig(config['Model'], {'sample_graph' : sample_graph, 'sample_global': global_sample}).to(device)
             
             if args.ckpt < 0:
-                ep, checkpoint = utils.get_best_epoch(config, var=args.var, mode='max', device=device)
+                ep, checkpoint = utils.get_best_epoch(config, var=args.var, mode=args.mode, device=device)
             else:
                 ep, checkpoint = utils.get_specific_epoch(config, args.ckpt, device=device)
             # Remove distributed/compiled prefixes if present

@@ -1,0 +1,453 @@
+# HZγ Mll80to100 — CR Data Processing, Inference and Background Estimation Workflow
+
+## 1. Project scope
+
+This workflow completes the Control Region (CR) part of the HZγ Mll80to100 four-class, four-fold GNN analysis.
+
+The existing MC and nominal Data processing and inference have already been completed. Do not repeat these steps or overwrite existing results.
+
+### Current status
+
+| Task | Status |
+|---|---|
+| MC merging and pt-only preparation | Completed |
+| MC four-class, four-fold inference | Completed |
+| Nominal Data merging and pt-only preparation | Completed |
+| Nominal Data inference | Completed |
+| CR Data extraction and merging | Pending |
+| CR Data pt-only preparation | Pending |
+| CR Data GNN inference | Pending |
+| CR validation and diagnostic plots | Pending |
+| CR-based background estimation | Pending |
+| Final significance calculation | Pending |
+
+## 2. Input and output directories
+
+Original samples:
+
+`/publicfs/cms/user/laipeizhu/Eos/HZgamma/root_p2root_v3_Mll80to100/`
+
+Analysis workspace:
+
+`/scratchfs2/cms/huangsuyun/GNN4Colliders/`
+
+Use the existing nominal Data and MC scored directories as references. Before implementation, inspect their actual paths and configurations rather than assuming directory names.
+
+Suggested independent CR directories:
+
+- `root_p2root_v3_Mll80to100_CR_merged`
+- `root_p2root_v3_Mll80to100_CR_pt_only`
+- `root_p2root_v3_Mll80to100_CR_scored`
+
+Do not modify the existing nominal Data or MC directories.
+
+## 3. Stage 1 — Inspect original CR Data
+
+Before writing or executing the processing script, inspect the original Data ROOT files.
+
+### 3.1 Inspect ROOT structure
+
+For every Run 3 data-taking period, check:
+
+- Available ROOT files.
+- Available TTrees.
+- Event counts in each TTree.
+- Branch names and data types.
+- Availability of `m_llg`.
+- Availability of all required GNN input branches.
+- Availability of photon eta and other variables needed by inference.
+- Whether the CR contains both SR and sideband events.
+
+The expected five CR categories are:
+
+1. `CR_lowIDMVA__ttHhad`
+2. `CR_lowIDMVA__ttHlep`
+3. `CR_lowIDMVA__untag`
+4. `CR_lowIDMVA__VH3l`
+5. `CR_lowIDMVA__VHpTmiss`
+
+These are expected names and must be verified against the actual files.
+
+### 3.2 Understand CR sideband definitions
+
+Determine how the original CR files distinguish SR and SB.
+
+Use the existing analysis convention and inspect the actual branches.
+
+If a dedicated region flag exists, understand its definition. Otherwise, determine whether the region must be derived from `m_llg`.
+
+The established HZγ mass regions should be used consistently:
+
+- SR: 120–130 GeV.
+- SB: 110–120 GeV and 130–180 GeV.
+
+Do not assume these boundaries are already encoded in a branch without checking.
+
+### 3.3 Produce an inspection report
+
+Record the following for every year and category:
+
+- Total entries.
+- CR SR entries.
+- CR SB entries.
+- Missing branches.
+- Available weights and their types.
+- Mass distribution and mass range.
+
+Stop if the required category trees or sideband information are missing or inconsistent. Resolve the tree structure before proceeding.
+
+## 4. Stage 2 — Merge CR Data
+
+Create a dedicated script for CR Data merging.
+
+The implementation should follow the existing `merge_trees_all.py` conventions wherever possible.
+
+### 4.1 Merge five categories
+
+Merge the five CR category trees into:
+
+`merged_CR_lowIDMVA`
+
+Add a category identifier:
+
+| cr_category_tag | Category |
+|---:|---|
+| 0 | ttHhad |
+| 1 | ttHlep |
+| 2 | untag |
+| 3 | VH3l |
+| 4 | VHpTmiss |
+
+Preserve all original branches, including:
+
+- `m_llg`
+- Photon and lepton kinematics
+- GNN input variables
+- Original event identifiers, if available
+- Original region information
+- Other analysis variables
+
+Do not unnecessarily modify or rename existing branches.
+
+### 4.2 Inclusive CR
+
+If `CR_lowIDMVA__inclusive` exists, process it separately for cross-checks.
+
+Do not combine the inclusive tree with the five category trees. It contains overlapping events and would cause double counting.
+
+Suggested output structure:
+
+```text
+Data/
+    2022preEE.root
+    2022postEE.root
+    2023preBPix.root
+    2023postBPix.root
+    2024.root
+    2025.root
+    2026.root
+```
+
+Each output ROOT file should contain:
+
+```text
+merged_CR_lowIDMVA
+merged_CR_lowIDMVA_inclusive
+```
+
+The actual available years must be determined from the input directory.
+
+### 4.3 Validation
+
+After merging:
+
+- Check that the total entries equal the sum of the five input category trees.
+- Check each category separately.
+- Check SR and SB entries separately.
+- Check that the category tags are correct.
+- Check that no events are duplicated.
+- Compare the five-category total with the inclusive tree, if available.
+
+The inclusive tree is a cross-check, not an additional source of events.
+
+## 5. Stage 3 — pt-only preparation
+
+Use the existing script:
+
+`tools/code/prepare_pt_only_inputs.py`
+
+as the reference.
+
+Create a CR-specific preparation script, keeping the existing implementation style and making only necessary changes.
+
+### 5.1 Derived variables
+
+Generate:
+
+```text
+lep0_pt_div_mllg
+lep1_pt_div_mllg
+lep2_pt_div_mllg
+lep3_pt_div_mllg
+lep4_pt_div_mllg
+lep5_pt_div_mllg
+photon_pt_div_mllg
+```
+
+The definition is:
+
+\[
+p_T^{\mathrm{normalized}} =
+\frac{p_T}{m_{\ell\ell\gamma}}
+\]
+
+Preserve nonpositive placeholder values according to the existing pt-only implementation.
+
+### 5.2 Branch preservation
+
+Keep all original branches.
+
+In particular, preserve:
+
+- `m_llg`
+- `cr_category_tag`
+- CR region information
+- Photon eta
+- Photon kinematics
+- Lepton kinematics
+- All GNN input branches
+
+Do not fabricate a fold variable for Data.
+
+### 5.3 Output
+
+Write to the independent CR pt-only directory.
+
+Validate:
+
+- Entry counts before and after processing.
+- Original branch preservation.
+- Derived variable values.
+- No unexpected NaN or infinity values.
+- SR/SB counts unchanged.
+
+## 6. Stage 4 — CR Data GNN inference
+
+This stage uses the existing four-class, four-fold trained models.
+
+Do not retrain the network.
+
+### 6.1 Reuse existing models
+
+Find the four existing training directories:
+
+```text
+fold0
+fold1
+fold2
+fold3
+```
+
+Use their existing checkpoints.
+
+The model architecture, input feature definitions, feature scales, normalization, and inference settings must match those used for nominal Data.
+
+### 6.2 Inference configuration
+
+Start from the actual nominal Data inference configuration.
+
+Make only the necessary changes:
+
+- Input directory: CR pt-only directory.
+- Input TTree: `merged_CR_lowIDMVA`.
+- Output directory: CR scored directory.
+- Preserve the original model checkpoints.
+- Preserve all GNN input feature definitions.
+- Preserve the four-class output convention.
+
+Do not use the inclusive tree in the official inference.
+
+### 6.3 Four-fold consistency
+
+The most important requirement is that CR Data and nominal Data must use exactly the same model inference convention.
+
+Inspect the existing nominal Data inference procedure first.
+
+If nominal Data was evaluated using all four models, apply the same procedure to CR Data.
+
+If nominal Data used a different explicitly defined model assignment, reproduce that assignment exactly.
+
+Do not independently invent a new fold assignment or average model outputs unless that is already the nominal Data convention.
+
+Data must not be treated as MC OOF events simply by inventing `photon_eta_fold`.
+
+### 6.4 Inference validation
+
+After inference, check:
+
+- All expected output files exist.
+- All five CR categories are retained.
+- Original branches remain available.
+- GNN score branches are present.
+- Event counts are unchanged.
+- SR/SB counts are unchanged.
+- Score distributions are finite and reasonable.
+
+Compare the nominal Data and CR Data score distributions using consistent selections.
+
+## 7. Stage 5 — CR diagnostic studies
+
+Before calculating significance, make diagnostic plots and tables.
+
+For each of the five analysis categories, inspect:
+
+1. CR SR event count.
+2. CR SB event count.
+3. Nominal Data SB event count.
+4. Four-class GNN score distributions.
+5. GNN category populations.
+6. `m_llg` distributions in CR SR and SB.
+7. The same quantities for nominal Data where applicable.
+
+Use consistent binning, selections, and model inference conventions.
+
+Check whether the CR and nominal Data sideband distributions are sufficiently compatible for a transfer-factor method.
+
+If significant differences exist, investigate their origin before calculating the final background estimate.
+
+## 8. Stage 6 — CR-based background estimation
+
+The purpose of the CR is to estimate the background in the nominal signal region using Data sideband normalization.
+
+For a given analysis category and GNN score region, define:
+
+\[
+\alpha =
+\frac{N_{\mathrm{Data,SB}}}
+{N_{\mathrm{CR,SB}}}
+\]
+
+Then estimate the background in SR:
+
+\[
+B_{\mathrm{CR,SR}} =
+\alpha N_{\mathrm{CR,SR}}
+\]
+
+Here:
+
+- \(N_{\mathrm{Data,SB}}\): nominal Data sideband events.
+- \(N_{\mathrm{CR,SB}}\): CR Data sideband events.
+- \(N_{\mathrm{CR,SR}}\): CR Data signal-window events.
+
+Use consistent category definitions and GNN selections in all three quantities.
+
+Calculate the transfer factor separately for the five analysis categories and the corresponding GNN score regions, unless a justified statistical combination is required.
+
+### Important checks
+
+- Never count the inclusive CR together with the five individual categories.
+- Do not include SB events in the final SR signal or background yields.
+- Investigate low-statistics or empty CR SB bins.
+- Check possible signal contamination in the CR.
+- Avoid double counting MC backgrounds if the CR method already estimates the total non-signal background.
+
+Document all assumptions and any category merging.
+
+## 9. Stage 7 — Final significance calculation
+
+The final significance uses:
+
+\[
+S = N_{\mathrm{ttH,MC,SR}}
+\]
+
+and:
+
+\[
+B = B_{\mathrm{CR,SR}}
+\]
+
+The signal yield is taken from the existing ttH MC OOF inference results.
+
+The background is estimated from CR Data using the nominal Data SB normalization.
+
+The final significance is evaluated in the five analysis categories and the selected GNN score regions.
+
+Use the established Asimov significance implementation and propagate the relevant statistical uncertainties.
+
+Do not use training SB yields directly as signal or background contributions to the final Z calculation.
+
+The final report should contain:
+
+- Signal yields.
+- CR background estimates.
+- Transfer factors.
+- Statistical uncertainties.
+- Per-category significance.
+- Combined significance.
+- Comparison with the previous cut-based result.
+
+## 10. Directory and file management
+
+Keep all CR-related outputs in a separate directory.
+
+Suggested structure:
+
+```text
+GNN4Colliders/
+|
+|-- root_p2root_v3_Mll80to100_merged/
+|-- root_p2root_v3_Mll80to100_merged_pt_only/
+|
+|-- root_p2root_v3_Mll80to100_CR_merged/
+|-- root_p2root_v3_Mll80to100_CR_pt_only/
+|-- root_p2root_v3_Mll80to100_CR_scored/
+|
+|-- tools/
+    |
+    |-- code/
+    |   |-- merge_hzg_mll80to100_cr.py
+    |   |-- prepare_hzg_mll80to100_cr_pt_only.py
+    |   |-- inference_hzg_mll80to100_cr.sh
+    |   |-- significance_hzg_mll80to100_cr.py
+    |
+    |-- results_hzg_mll80to100_cr/
+    |
+    |-- skills/
+        |-- hzg_4class_4fold_mll80to100/
+            |-- SKILL.md
+```
+
+Adapt the names to the existing project structure where appropriate. Do not create duplicate scripts if equivalent reusable implementations already exist.
+
+## 11. Agent execution rules
+
+1. Before changing files or creating directories, inspect the existing project structure and propose the changes.
+2. Ask for approval before creating a new directory structure if it differs from the existing plan.
+3. Preserve existing scripts and results.
+4. Reuse existing code and modify only what is necessary.
+5. Do not make unnecessary changes to plotting styles, legends, naming conventions, or unrelated code.
+6. Use temporary test directories only when necessary and clean them up after successful validation.
+7. Never overwrite existing scored ROOT files or model checkpoints.
+8. Record the exact commands, input paths, output paths, and validation results.
+9. Stop and report unexpected tree structures, missing branches, event-count discrepancies, or model/config inconsistencies instead of silently adapting.
+10. Complete and validate each stage before moving to the next one.
+
+## 12. Immediate next action
+
+Start with Stage 1 only.
+
+Inspect the original Run 3 Data ROOT files and report:
+
+- Actual CR tree names.
+- Branch availability.
+- Event counts in all five categories.
+- CR SR/SB definitions and populations.
+- Inclusive tree availability.
+- Differences between years.
+
+Do not begin merging until the inspection report has been reviewed.
+
+The goal is to finish CR Data processing and inference without touching the already completed MC and nominal Data results.
+  

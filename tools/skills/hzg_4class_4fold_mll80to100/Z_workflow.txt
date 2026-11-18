@@ -1,0 +1,793 @@
+# Workflow：4-Class GNN + CR Data-Driven Significance Calculation
+
+## 1. 研究目标
+
+基于 CMS H→Zγ 分析的 v3 Mll80to100 样本，开展 4-class GNN 分类及显著度优化研究。
+
+本 workflow 的主要目标：
+
+1. 使用所有 Higgs 产生过程作为 Signal，包括 ttH、VH、ggF 和 VBF。
+2. 利用 4-class GNN 的四个输出 score，将所有事件划分为四个互斥的 category。
+3. 联合优化三个 signal-enriched category 的 score cut。
+4. 使用 CR lowIDMVA Data，通过 sideband transfer factor 估计 SR 中的背景。
+5. 分别计算四个 category 的 S、B 和 Asimov Z。
+6. 保留原有的 4-fold OOF 验证和测试策略。
+7. 最终组合四个 category 和四个 fold 的显著度。
+
+本 workflow 使用 CR data-driven 方法估计背景，不使用背景 MC 计算 B。背景 MC 可以作为另一种独立的背景估计方法进行对比，但不能与 CR 估计的背景直接相加。
+
+---
+
+## 2. 输入样本
+
+### 2.1 Signal MC
+
+所有 Higgs 产生过程都作为 Signal：
+
+```text
+Signal/
+├── ttH/
+├── VH/
+├── ggF/
+└── VBF/
+```
+
+其中 ggF 和 VBF 在模型训练时合并为一个类别，但在 yield 计算时仍然保留各自的 MC 样本。
+
+总 Signal yield 为：
+
+\[
+S=S_{\mathrm{ttH}}+S_{\mathrm{VH}}
++S_{\mathrm{ggF}}+S_{\mathrm{VBF}}
+\]
+
+所有 Signal yield 使用 `weight_lumi` 加权。
+
+### 2.2 Nominal Data
+
+使用 nominal Data 获取背景归一化所需的 sideband 事例数：
+
+```text
+Data/Data/
+```
+
+Nominal Data 只使用 SB 事例，不使用 SR 中的 Data 事例计算背景。
+
+### 2.3 CR Data
+
+使用 CR lowIDMVA Data：
+
+```text
+Data/Data/
+```
+
+对应的 TTree：
+
+```text
+merged_CR_lowIDMVA
+```
+
+CR Data 同时提供：
+
+- CR Sideband 事例。
+- CR Signal Region 事例。
+
+### 2.4 Background MC
+
+本 workflow 中不使用 Background MC 计算背景产额。
+
+CR data-driven 方法直接替代 MC background 估计。
+
+后续可以使用 TT、ZG、ZJets 等背景 MC 独立计算另一套 Z，与 CR data-driven 结果进行比较。
+
+两种方法是不同的背景估计方案，不能将两者相加。
+
+---
+
+## 3. 输入目录及 TTree
+
+工作目录：
+
+```text
+/scratchfs2/cms/huangsuyun/GNN4Colliders/
+```
+
+使用已有的四折 scored 样本。
+
+Nominal MC：
+
+```text
+root_p2root_v3_pt_only_scored_ttH_4class_4fold_fold{0,1,2,3}/
+```
+
+Nominal Data：
+
+```text
+root_p2root_v3_pt_only_scored_ttH_4class_4fold_data_fold{0,1,2,3}/
+```
+
+CR Data：
+
+```text
+root_p2root_v3_cr_pt_only_scored_ttH_4class_4fold_fold{0,1,2,3}/
+```
+
+对应的 TTree：
+
+| 样本 | TTree |
+|---|---|
+| Signal MC | `merged_SR_Sideband` |
+| Nominal Data | `merged_SR_Sideband` |
+| CR Data | `merged_CR_lowIDMVA` |
+
+主要使用的 Branch：
+
+```text
+m_llg
+weight_lumi
+ttH_gnn_score
+photon_eta_fold
+```
+
+其中 `ttH_gnn_score` 是包含四个分量的 vector，读取后需要转换为：
+
+\[
+(N_{\mathrm{events}},4)
+\]
+
+类别看config
+
+的类别定义，实际使用前必须通过训练时的 label encoding 和模型输出确认，不能直接假定列顺序正确。
+
+使用全部 11 个数据年份：
+
+```text
+2016preVFP
+2016postVFP
+2017
+2018
+2022preEE
+2022postEE
+2023preBPix
+2023postBPix
+2024
+2025
+2026
+```
+
+---
+
+## 4. 质量窗口选择
+
+SR 和 SB 完全通过质量窗口定义。
+
+不使用 `source_tree_tag` 或 `is_SR` 判断事件属于 SR 还是 SB。
+
+### Signal Region
+
+\[
+120<m_{\ell\ell\gamma}<130\ \mathrm{GeV}
+\]
+
+### Lower Sideband
+
+\[
+110\leq m_{\ell\ell\gamma}<120\ \mathrm{GeV}
+\]
+
+### Upper Sideband
+
+\[
+130<m_{\ell\ell\gamma}\leq180\ \mathrm{GeV}
+\]
+
+### Combined Sideband
+
+\[
+SB=[110,120)\cup(130,180]
+\]
+
+不同样本的选择条件：
+
+| 样本 | 质量选择 |
+|---|---|
+| Signal MC | SR |
+| Nominal Data | SB |
+| CR Data | SR + SB |
+
+Nominal Data 的 SR 事例不参与背景估计。
+
+CR Data 必须保留 SR 和 SB 两部分。
+
+主分析中将上下两个 sideband 合并计算 transfer factor，同时分别统计上下 SB 的结果，作为一致性检查。
+
+---
+
+## 5. 4-Class GNN 事件分类
+
+模型对每个事件输出四个 score：
+
+\[
+(p_{\mathrm{ttH}},p_{\mathrm{VH}},
+p_{\mathrm{ggF+VBF}},p_{\mathrm{Other}})
+\]
+
+首先，对于每个事件，寻找四个 score 中最大的一个：
+
+\[
+k_{\max}=\arg\max_k p_k
+\]
+
+然后使用三个独立的 cut point：
+
+\[
+c_{\mathrm{ttH}},\quad
+c_{\mathrm{VH}},\quad
+c_{\mathrm{ggF+VBF}}
+\]
+
+将事件划分为四个互斥 category。
+
+### 5.1 ttH-enriched
+
+\[
+k_{\max}=\mathrm{ttH}
+\]
+
+并且：
+
+\[
+p_{\mathrm{ttH}}>c_{\mathrm{ttH}}
+\]
+
+### 5.2 VH-enriched
+
+\[
+k_{\max}=\mathrm{VH}
+\]
+
+并且：
+
+\[
+p_{\mathrm{VH}}>c_{\mathrm{VH}}
+\]
+
+### 5.3 ggF+VBF-enriched
+
+\[
+k_{\max}=\mathrm{ggF+VBF}
+\]
+
+并且：
+
+\[
+p_{\mathrm{ggF+VBF}}>c_{\mathrm{ggF+VBF}}
+\]
+
+### 5.4 Other
+
+所有不满足前三种条件的事件全部归入 Other：
+
+- 最大 score 是 Other。
+- 最大 score 是 ttH，但没有通过 ttH cut。
+- 最大 score 是 VH，但没有通过 VH cut。
+- 最大 score 是 ggF+VBF，但没有通过对应 cut。
+
+因此，每个事件只能进入一个 category。
+
+### 重要原则
+
+1. 所有样本，包括 Signal MC、Nominal Data 和 CR Data，都使用完全相同的分类规则。
+2. Category assignment 不能使用 MC truth 信息。
+3. 一个真实的 ttH 事件，如果 VH score 最大且通过 VH cut，就进入 VH-enriched。
+4. 一个真实的背景事件，如果 ttH score 最大且通过 ttH cut，就进入 ttH-enriched。
+5. Other 也必须参与后续显著度计算。
+6. 不再使用之前的 High/Medium/Low score 分类方式。
+
+需要明确区分：
+
+- GNN score 决定事件进入哪个 category。
+- MC process 决定事件是否属于 Signal 或 Background。
+
+两者不能混淆。
+
+---
+
+## 6. 四折 OOF 数据划分
+
+保留之前的 4-fold OOF 策略。
+
+对于模型 fold \(k\)，对应的 Validation 和 Test parity 为：
+
+| Model fold | Validation parity | Test parity |
+|---|---:|---:|
+| Fold 0 | 1 | 0 |
+| Fold 1 | 2 | 1 |
+| Fold 2 | 3 | 2 |
+| Fold 3 | 0 | 3 |
+
+Parity 定义：
+
+\[
+\mathrm{parity}=
+\mathrm{photon\_eta\_fold}\bmod4
+\]
+
+每个 fold 的处理流程：
+
+1. 读取对应 fold 的 scored 样本。
+2. 使用 Validation parity 优化三个 cut point。
+3. 固定优化得到的三个 cut point。
+4. 应用到对应的 Test parity。
+5. 计算四个 category 的 S、B 和 Z。
+
+Test 数据不能参与 cut point 优化。
+
+四个 Test parity 互不重叠，最终可以组合四折结果。
+
+---
+
+## 7. Signal Yield 计算
+
+对每个 fold、每个 category，合并四种 Higgs 产生过程的加权 yield。
+
+对于 category \(i\)：
+
+\[
+S_i=
+S_{\mathrm{ttH},i}
++S_{\mathrm{VH},i}
++S_{\mathrm{ggFVBF},i}·
+\]
+
+其中：
+
+\[
+S_{\mathrm{process},i}
+=
+\sum_{\substack{\mathrm{events\ in\ SR}\\
+\mathrm{category}=i}}
+w_{\mathrm{lumi}}
+\]
+
+Signal 的 MC 统计误差：
+
+\[
+\sigma_{S_i}=
+\sqrt{
+\sum_{\mathrm{events\ in\ category}\ i}
+w_{\mathrm{lumi}}^2
+}
+\]
+
+需要分别保存：
+
+- ttH yield。
+- VH yield。
+- ggFVBF yield。
+
+- 四种 Higgs 产生过程的总 yield。
+
+四个 category 都需要计算 Signal，包括 Other。
+
+---
+
+## 8. CR Data-driven Background Estimation
+
+对四个 category 分别使用 CR transfer factor 估计背景。
+
+对于 category \(i\)，定义以下三个计数。
+
+### 8.1 Nominal Data Sideband
+
+\[
+N_{\mathrm{Data,SB},i}
+\]
+
+Nominal Data 中属于 category \(i\) 且质量位于 Combined SB 的事例数。
+
+### 8.2 CR Sideband
+
+\[
+N_{\mathrm{CR,SB},i}
+\]
+
+CR Data 中属于 category \(i\) 且质量位于 Combined SB 的事例数。
+
+### 8.3 CR Signal Region
+
+\[
+N_{\mathrm{CR,SR},i}
+\]
+
+CR Data 中属于 category \(i\) 且质量位于 SR 的事例数。
+
+所有 Data 和 CR 的计数均不加权，直接使用事例数。
+
+### 8.4 Transfer Factor
+
+每个 category 独立计算：
+
+\[
+\boxed{
+\alpha_i=
+\frac{N_{\mathrm{Data,SB},i}}
+{N_{\mathrm{CR,SB},i}}
+}
+\]
+
+其物理意义是将 CR Data 的 SB 归一化到 Nominal Data SB 的水平。
+
+### 8.5 Background Prediction
+
+利用归一化后的 CR Data 在 SR 中的事例数估计背景：
+
+\[
+\boxed{
+B_i=\alpha_i N_{\mathrm{CR,SR},i}
+}
+\]
+
+四个 category 分别计算：
+
+- ttH-enriched
+- VH-enriched
+- ggF+VBF-enriched
+- Other
+
+不能使用一个 inclusive alpha 代替四个 category 各自的 transfer factor。
+
+---
+
+## 9. Background 统计误差
+
+在三个计数相互独立、满足 Poisson 统计的近似下：
+
+\[
+B_i=
+\frac{
+N_{\mathrm{Data,SB},i}
+N_{\mathrm{CR,SR},i}
+}{
+N_{\mathrm{CR,SB},i}
+}
+\]
+
+相对统计误差：
+
+\[
+\left(\frac{\sigma_{B_i}}{B_i}\right)^2
+=
+\frac{1}{N_{\mathrm{Data,SB},i}}
++
+\frac{1}{N_{\mathrm{CR,SB},i}}
++
+\frac{1}{N_{\mathrm{CR,SR},i}}
+\]
+
+因此：
+
+\[
+\boxed{
+\sigma_{B_i}=
+B_i\sqrt{
+\frac{1}{N_{\mathrm{Data,SB},i}}
++
+\frac{1}{N_{\mathrm{CR,SB},i}}
++
+\frac{1}{N_{\mathrm{CR,SR},i}}
+}
+}
+\]
+
+如果必要的计数为零，则对应 transfer factor 或背景预测无效。
+
+不能将无法计算的 alpha 直接当成零背景。
+
+需要设置最低 CR SB 统计量要求，并在优化时排除统计量不足的无效区域。
+
+以上是近似的统计误差传播，不代表已经完成包含 nuisance parameters 的完整 profile-likelihood 计算。
+
+---
+
+## 10. 显著度计算
+
+每个 category 分别使用 Asimov significance：
+
+\[
+\boxed{
+Z_i=
+\sqrt{
+2\left[
+(S_i+B_i)\ln\left(1+\frac{S_i}{B_i}\right)-S_i
+\right]
+}
+\]
+
+分别计算：
+
+\[
+Z_{\mathrm{ttH}},\quad
+Z_{\mathrm{VH}},\quad
+Z_{\mathrm{ggF+VBF}},\quad
+Z_{\mathrm{Other}}
+\]
+
+最终四个 category 的显著度平方和开根号：
+
+\[
+\boxed{
+Z_{\mathrm{fold}}=
+\sqrt{
+Z_{\mathrm{ttH}}^2+
+Z_{\mathrm{VH}}^2+
+Z_{\mathrm{ggF+VBF}}^2+
+Z_{\mathrm{Other}}^2
+}
+}
+\]
+
+四个 category 都必须参与显著度计算。
+
+目前的 Asimov Z 将 B 作为名义背景产额，另外单独传播 S 和 B 的统计误差。这不等价于将背景不确定度作为 nuisance parameter 纳入 profile likelihood。
+
+---
+
+## 11. 三个 Cut Point 的联合优化
+
+需要优化三个参数：
+
+\[
+c_{\mathrm{ttH}},\quad
+c_{\mathrm{VH}},\quad
+c_{\mathrm{ggF+VBF}}
+\]
+
+使用 Optuna 或之前的 Bayesian optimization 框架。
+
+每一个 trial 的处理步骤：
+
+1. 使用三个 cut point 对所有 Validation 事件进行分类。
+2. 将事件划分为四个互斥 category。
+3. 计算四个 category 中所有 Higgs MC 的 Signal yield。
+4. 计算 Nominal Data SB、CR SB 和 CR SR 的事例数。
+5. 分别计算四个 category 的 alpha 和 B。
+6. 计算四个 category 的 Asimov Z。
+7. 将四个 Z 平方和开根号，作为本次 trial 的目标函数。
+
+优化目标：
+
+\[
+\boxed{
+Z_{\mathrm{validation}}=
+\sqrt{
+Z_{\mathrm{ttH}}^2+
+Z_{\mathrm{VH}}^2+
+Z_{\mathrm{ggF+VBF}}^2+
+Z_{\mathrm{Other}}^2
+}
+}
+\]
+
+最大化 Validation 的组合显著度。
+
+### 优化要求
+
+- 三个 cut point 必须联合优化，而不是分别独立优化。
+- Other 不需要单独设置 cut。
+- 三个 cut 的范围根据实际 score 分布确定。
+- 避免 cut 过高，导致 enriched category 统计量过少。
+- 保证 CR SB 有足够的统计量。
+- 对无法计算 alpha 或 B 的 trial 进行惩罚或判为无效。
+- 每个 fold 单独保存自己的三个最优 cut point。
+
+优化目标是在提高 signal enrichment 的同时，保留足够的统计量。
+
+---
+
+## 12. Test 数据评估
+
+完成每个 fold 的 Validation 优化后，固定三个 cut point。
+
+将它们应用到对应的 Test parity。
+
+每个 Test fold 输出以下表格：
+
+| Category | S | sigma_S | N_Data_SB | N_CR_SB | N_CR_SR | alpha | B | sigma_B | Z |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| ttH-enriched | | | | | | | | | |
+| VH-enriched | | | | | | | | | |
+| ggF+VBF-enriched | | | | | | | | | |
+| Other | | | | | | | | | |
+
+同时输出：
+
+- 三个最优 cut point。
+- 总 Signal yield。
+- 总 Background prediction。
+- 四个 category 的独立显著度。
+- 四个 category 组合后的 fold significance。
+
+注意：每个 fold 的 cut point 可以不同，但 Test 评估时必须使用对应 fold 在 Validation 上确定的 cut point。
+
+---
+
+## 13. 四折最终组合
+
+四个 fold 的 Test parity 互不重叠。
+
+由于不同 fold 的 cut point 可能不同，需要保留每个 fold、每个 category 的独立结果。
+
+最终显著度：
+
+\[
+\boxed{
+Z_{\mathrm{final}}=
+\sqrt{
+\sum_{k=0}^{3}
+\sum_{i=1}^{4}
+Z_{k,i}^{\,2}
+}
+}
+\]
+
+其中：
+
+- \(k\)：四个 OOF fold。
+- \(i\)：四个 enriched category。
+
+不能简单平均四个 fold 的 Z。
+
+也不能先将四个 fold 的 alpha 平均，再将背景平均分配给四个 fold。
+
+在假设各 fold-category bin 独立的近似下，显著度统计误差传播为：
+
+\[
+\sigma_{Z_{\mathrm{final}}}
+=
+\sqrt{
+\sum_{k,i}
+\left(
+\frac{Z_{k,i}}{Z_{\mathrm{final}}}
+\sigma_{Z_{k,i}}
+\right)^2
+}
+\]
+
+需要注意：如果引入跨 category 或跨 fold 共享的系统不确定度，应进一步考虑其相关性，不能一律按照独立误差处理。
+
+最终同时保存每个 fold 的结果和四折组合结果。
+
+---
+
+## 14. 必须生成的 Diagnostic 和绘图
+
+### 14.1 Score 和 Category 诊断
+
+- 四个 score 分量在不同样本中的分布。
+- 最大 score 对应的类别分布。
+- 最终四个 category 的事例数。
+- 每个 category 中 ttH、VH、ggF、VBF 的 Signal 组成。
+- Nominal Data SB 和 CR Data 在四个 category 中的分布。
+
+### 14.2 优化诊断
+
+- Optuna trial history。
+- 每个 fold 优化得到的三个 cut point。
+- Validation Z 随三个 cut point 变化的情况。
+- 优化前后的各 category yield 对比。
+
+### 14.3 CR Background 诊断
+
+每个 fold、每个 category 输出：
+
+- Nominal Data SB 事例数。
+- CR SB 事例数。
+- CR SR 事例数。
+- Transfer factor alpha。
+- Background prediction B。
+- B 的统计误差。
+
+另外分别计算 Lower SB 和 Upper SB 的 transfer factor，检查二者是否一致。
+
+### 14.4 最终显著度诊断
+
+- 每个 category 的 S 和 B。
+- 各 category 的 S/B。
+- 四个 category 的独立 Z。
+- 每个 fold 的组合 Z。
+- 最终四折组合 Z。
+
+---
+
+## 15. 输出目录结构
+
+使用独立的结果目录，不覆盖之前的分析结果。
+
+建议：
+
+```text
+tools/
+├── significance_4class_v3_cr_4cat.py
+└── results_4class_cr/
+    ├── fold0/
+    │   ├── optimization.txt
+    │   ├── validation_results.csv
+    │   ├── test_results.csv
+    │   └── plots/
+    ├── fold1/
+    │   ├── optimization.txt
+    │   ├── validation_results.csv
+    │   ├── test_results.csv
+    │   └── plots/
+    ├── fold2/
+    ├── fold3/
+    ├── combined_results.csv
+    ├── final_z.txt
+    └── summary_plots/
+```
+
+需要保存：
+
+- 每个 fold 的三个 cut point。
+- Validation 和 Test 的 yield。
+- 每个 category 的 alpha 和 B。
+- 每个 category 的 Z 和统计误差。
+- 最终组合 Z。
+
+---
+
+## 16. 代码实现注意事项
+
+1. 保留原有的四折 OOF 划分。
+2. ttH、VH、ggF、VBF 全部作为 Signal。
+3. 使用 GNN 的全部四个 score 进行事件分类。
+4. Signal MC、Nominal Data 和 CR Data 使用完全相同的 score 分类规则。
+5. Category assignment 不能使用 MC truth。
+6. SR/SB 只使用质量窗口选择，不使用 `source_tree_tag` 或 `is_SR`。
+7. 使用 Nominal Data SB 归一化 CR Data。
+8. 四个 category 分别计算 transfer factor。
+9. Other 必须参与最终 Z。
+10. 三个 cut point 在 Validation 上联合优化。
+11. Test 只使用固定后的 cut point 进行评估。
+12. CR-based B 计算中不使用 Background MC。
+13. 不再使用 High/Medium/Low score 分类。
+14. 尽量沿用之前的代码结构和绘图风格，避免不必要的代码修改。
+15. 不覆盖旧版本代码和结果。
+
+### 正式运行前的检查
+
+先执行小规模 Diagnostic，确认：
+
+- 四个 score 分量的类别顺序正确。
+- 所有输入文件和 era 均存在。
+- 每个事件恰好进入一个 category。
+- Signal、Nominal Data 和 CR Data 使用相同的分类规则。
+- 四个 category 都有足够的 CR 统计量。
+- 合并样本时没有重复事件。
+- 所有四折数据均正确使用对应的 OOF score。
+
+---
+
+## 17. 最终分析方案总结
+
+最终分析包含四个互斥 category：
+
+```text
+ttH-enriched
+VH-enriched
+ggF+VBF-enriched
+Other
+```
+
+所有 Higgs 产生过程都作为 Signal。
+
+利用 CR Data 的 SB 归一化 Nominal Data SB，再使用归一化后的 CR Data SR 估计背景。
+
+每个 category 独立计算 S、B 和 Z。
+
+三个 enriched category 的 cut point 通过 Validation 联合优化，Other 收集所有剩余事件。
+
+最终组合四个 category 和四个 OOF Test fold 的显著度。
+
+这套 workflow 完全取代之前基于单一 ttH score 的 High/Medium/Low 显著度优化方案，作为新的 4-class、四 category、CR data-driven significance analysis 规范。

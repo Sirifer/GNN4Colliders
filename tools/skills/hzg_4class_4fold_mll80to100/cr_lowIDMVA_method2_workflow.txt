@@ -1,0 +1,200 @@
+HZγ ttH 4-class v3 — CR_lowIDMVA 方法二 (control region background estimate) Workflow
+========================================================================================
+更新日期: 2026-11-03
+
+本文件记录 v3 (Mll80to100) 4-class 分析里"方法二"(用 CR_lowIDMVA data 做
+data-driven 背景估计) 的数据准备 / 推理 / 检查 / Z 流程。
+前提: nominal MC + nominal Data 的 merge / pt_only / 4-fold inference 已全部完成,
+本流程不重训、不重处理 MC 和 nominal Data, 只新处理 CR Data。
+
+方法二的核心(用户定义):
+  1. 拿 CR data 的 mass 形状          ← CR_lowIDMVA__<cat>    (CR SR 区, source_tree_tag 0-4)
+  2. 用 sideband 积分比把 CR scale 到对齐 nominal sideband data
+       alpha = N_Data_SB / N_CR_SB     ← N_CR_SB 来自 CR_lowIDMVA_SB__<cat> (source_tree_tag 5-9)
+                                        N_Data_SB 来自 nominal merged_SR_Sideband (source_tree_tag 奇)
+  3. 取 120-130 的 scale 后 CR data 作为本底事例数
+       B_CR_SR = alpha × N_CR_SR
+  GNN 4-class score 在第 4 步检查 + 最终 Z 里用来把事件划进 signal-enriched 区域,
+  但核心 transfer factor alpha 本身不依赖 GNN。
+
+
+一、CR 树结构(已确认, 以 2018 Data 为例)
+-----------------------------------------
+原始文件 /publicfs/cms/user/laipeizhu/Eos/HZgamma/root_p2root_v3_Mll80to100/Data/Data/<era>.root
+每个文件 56 个 tree。方法二只用 lowIDMVA 这一组(用户决定, 不碰 lowPTOverMllg / FSRgamma):
+
+  CR_lowIDMVA__<cat>      : CR 的 SR 区  (m_llg ~108-136, 5 cat 各一棵)
+  CR_lowIDMVA_SB__<cat>   : CR 的 SB 区  (m_llg ~96-184,  5 cat 各一棵)
+  5 个 cat: ttHhad / ttHlep / untag / VH3l / VHpTmiss
+
+关键事实:
+  - CR 树和 SR/Sideband 树分支完全一致(406 个分支, 含 weight_lumi=1.0, m_llg,
+    photon_eta, 全部 *_pt, is_SR 等)。所以 prepare_pt_only_inputs_v3.py 可直接复用。
+  - inclusive ≠ sum(5cat): CR_lowIDMVA__inclusive=10009 vs sum(5cat)=161 (2018)。
+    category 树是 exclusive 切片, inclusive 是全部事件。merge 只取 5 cat, 不碰 inclusive
+    (否则重复计数)。inclusive 留在原始文件做交叉检查。
+  - 统计量级(2018 一个 era): 5 cat CR SR 共 161, CR SB 共 657。11 era 合并 6621 事件。
+    ttHhad/ttHlep/VH3l 单 era 个位数事件 → SB 积分要全 era 合并才有统计。
+
+
+二、目录与路径
+--------------
+REPO = /scratchfs2/cms/huangsuyun/GNN4Colliders
+DGL  = REPO/root_gnn_dgl
+PYTHON = /publicfs/cms/user/huangsuyun/conda/envs/pytorch/bin/python
+
+CR 专用目录(独立, 不动 nominal):
+  root_p2root_v3_cr_merged                                     (merge 输出)
+  root_p2root_v3_cr_pt_only                                    (pt_only 输出)
+  root_p2root_v3_cr_pt_only_scored_ttH_4class_4fold_fold<k>    (4 fold 推理得分, k=0..3)
+
+CR 复用(不复制, 只指向):
+  trainings/hzg/ttH_4class_4fold_fold<k>   ← nominal 训练好的 checkpoint, CR 推理直接读
+  configs/hzg/ttH_4class_4fold_fold<k>.yaml 不复用(CR 要改 tree_name, 见下)
+
+
+三、脚本与 config(已写好并验证)
+--------------------------------
+REPO/tools/code/
+  merge_cr_lowIDMVA_v3.py        — Step1 merge
+  gen_cr_lowIDMVA_configs_jobs.py — 生成 CR config + inference sbatch
+  (prepare_pt_only_inputs_v3.py 复用, 不新写)
+
+REPO/tools/
+  run_cr_lowIDMVA_v3.sh          — Step1+2+3 一键串行 driver(conda 激活 + 三步)
+  diag_cr_lowIDMVA_v3.py         — Step4 检查 + 方法二 transfer factor
+
+DGL/configs/hzg/cr_lowIDMVA_ttH_4class_4fold_fold{0,1,2,3}.yaml   — CR 推理 config
+DGL/jobs/inference/hzg_cr_lowIDMVA_ttH_4class_4fold_inference_fold{0,1,2,3}.sbatch
+
+
+1. merge_cr_lowIDMVA_v3.py (Step1, 已 11 era 全量验证通过)
+   功能: 把 Data/Data/<era>.root 的 10 棵 CR 树(5 cat × {SR,SB})合成一棵
+         "merged_CR_lowIDMVA"。
+   source_tree_tag 布局(和 nominal 的 SR/SB 交替不同, 这里按 region 分组):
+       0-4 = CR_lowIDMVA__{ttHhad,ttHlep,untag,VH3l,VHpTmiss}   (CR SR, 给形状 + 第3步)
+       5-9 = CR_lowIDMVA_SB__{ttHhad,ttHlep,untag,VH3l,VHpTmiss}(CR SB, 给第2步积分)
+   额外写入(和 merge_trees_v3.py 同语义):
+       weight_lumi_abs (float32, Data=1.0)
+       photon_eta_fold (int32, floor(eta*10000), fold 变量, 和 nominal 同编码 → 推理能按 fold 切)
+       class_tag (int32, -1, Data 不训练)
+   只扫 Data/Data, 不扫 MC(方法二纯 data-driven)。
+   验证: 11 era 全 DONE, merged=6621 == raw_sum=6621, tag 分布/质量区间/4 个新分支全对。
+
+   用法:
+     $PYTHON tools/code/merge_cr_lowIDMVA_v3.py \
+        --input-dir /publicfs/cms/user/laipeizhu/Eos/HZgamma/root_p2root_v3_Mll80to100 \
+        --output-dir $REPO/root_p2root_v3_cr_merged \
+        --manifest $REPO/merge_cr_lowIDMVA_status.txt
+     # 可先 --dry-run 看文件清单
+
+2. prepare_pt_only_inputs_v3.py (Step2, 复用 nominal 脚本, 已验证)
+   直接复用, 只改 --tree:
+     $PYTHON tools/code/prepare_pt_only_inputs_v3.py \
+        --input-dir $REPO/root_p2root_v3_cr_merged \
+        --output-dir $REPO/root_p2root_v3_cr_pt_only \
+        --tree merged_CR_lowIDMVA
+   验证(2018): 818 entries, _div_mllg==pt/m_llg 对, weight_lumi_avg=1.0,
+              source_tree_tag={0..9}, is_SR 透传保留。
+
+3. gen_cr_lowIDMVA_configs_jobs.py (生成 CR config + inference job)
+   $PYTHON tools/code/gen_cr_lowIDMVA_configs_jobs.py
+   产出 8 个文件(4 config + 4 sbatch), 已验证:
+     - YAML 解析 OK, tree_name=merged_CR_lowIDMVA
+     - node_branch_names/types/scales 和 nominal 完全一致(6×16)
+     - Model out_size=4 in_size=6(和训练好的 checkpoint 架构匹配)
+     - Training_Directory 指向 nominal 的 trainings/hzg/ttH_4class_4fold_fold<k>
+       (复用 checkpoint, get_best_epoch 按 Test_AUC max 选同一个最佳 epoch)
+     - raw_dir=root_p2root_v3_cr_pt_only, weight_var=weight_lumi_avg, fold_var=photon_eta_fold
+     - 4 sbatch bash -n 全过
+
+   ★ 为什么 CR 要单独 config(不能只在 nominal config 上加 --tree):
+     inference.py 写分两步(line 243 读, line 330 写)。--tree 只改读侧 dataset dict,
+     写侧 line 330 重新 select_dataset_config 从 config 原值取 tree_name, 不受 --tree 影响。
+     nominal config 的 tree_name=merged_SR_Sideband, CR 文件没这棵树 → 写步骤会失败。
+     所以 CR config 把 tree_name 改成 merged_CR_lowIDMVA, 读写都用它。
+
+4. run_cr_lowIDMVA_v3.sh (一键 driver)
+   bash tools/run_cr_lowIDMVA_v3.sh
+   依次: Step1 merge → Step2 pt_only → Step3 inference(4 fold × 11 era)。
+   inference 前会检查 CR config 是否存在, 不存在提示先跑 gen 脚本。
+
+
+四、Step3 推理(4 fold, 复用 nominal 训练模型)
+----------------------------------------------
+和 nominal Data 推理完全同策略: 每个 fold 模型对所有 CR 事件打分(不按 fold 切事件),
+下游按 photon_eta_fold % 4 选 OOF 分数(parity k 的事件用 fold{k} 的分数,
+即没见过它的模型)。所以 CR 也要 4 个 fold 目录, 不能只 1 个。
+
+提交:
+  sbatch DGL/jobs/inference/hzg_cr_lowIDMVA_ttH_4class_4fold_inference_fold0.sbatch
+  sbatch DGL/jobs/inference/hzg_cr_lowIDMVA_ttH_4class_4fold_inference_fold1.sbatch
+  sbatch DGL/jobs/inference/hzg_cr_lowIDMVA_ttH_4class_4fold_inference_fold2.sbatch
+  sbatch DGL/jobs/inference/hzg_cr_lowIDMVA_ttH_4class_4fold_inference_fold3.sbatch
+  4 fold 可并行(GPU 独立), 每个跑 11 era。
+
+输出: root_p2root_v3_cr_pt_only_scored_ttH_4class_4fold_fold<k>/Data/Data/<era>.root
+  分支 ttH_gnn_score = vector<float>(4 个 class 的 softmax), 和 nominal 同名同结构。
+  ttH class 是 index 1(label 约定 bkg=0 ttH=1 VH=2 ggF+VBF=3)。
+
+验证(推理后):
+  - 11 个输出文件齐, 事件数和 pt_only 一致(818 等)
+  - source_tree_tag 0-9 都在, SR/SB 计数不变
+  - ttH_gnn_score 有限, range 合理
+
+
+五、Step4 检查 + 方法二 Z(diag_cr_lowIDMVA_v3.py)
+-------------------------------------------------
+  $PYTHON tools/diag_cr_lowIDMVA_v3.py                 # pre-GNN transfer factor
+  $PYTHON tools/diag_cr_lowIDMVA_v3.py --score-cut 0.5 # 加 GNN score>0.5 的版本
+
+  读 CR 4 fold scored + nominal Data 4 fold scored, 按 OOF 选分(parity k→fold{k}),
+  对每个 cat 报告:
+    - CR_SR / CR_SB / Nom_SB 事件数(pre-GNN 和 GNN cut 后两版)
+    - alpha = Nom_SB / CR_SB
+    - B_CR_SR = alpha × CR_SR (+ 统计误差)
+    - score 分布 sanity(有限/range)
+  mass 窗口: SR 120-130, SB 110-120 ∪ 130-180(和 v2 diag_cr_counts_v2.py 一致)。
+  输出 tools/results_cr_lowIDMVA_v3/cr_lowIDMVA_v3_diag.txt。
+
+  ★ nominal 的 source_tree_tag 是 SR/SB 交替(偶=SR, 奇=SB, tag//2 = cat index),
+    CR 的 source_tree_tag 是按 region 分组(0-4 SR, 5-9 SB)。diag 脚本两边都正确处理了,
+    不要混用。
+
+  检查重点(用户列的):
+    - 5 cat 的 CR SR / CR SB 事件数
+    - 4 分类 score 分布(CR vs nominal 对比, 看 transfer factor 方法是否自洽)
+    - GNN 各分类区域事件数(加 --score-cut 看 high-score 区)
+  之后再进 transfer factor + Z 的最终计算(可基于 significance_4fold.py 改,
+   把 B 从 MC counting 换成 B_CR_SR)。
+
+
+六、当前状态 / 下一步
+--------------------
+[完成 + 验证]
+  - Step1 merge_cr_lowIDMVA_v3.py: 11 era 全量跑通, 事件数/tag/分支全对
+  - Step2 pt_only: 2018 端到端验证(_div_mllg, weight_lumi_avg=1.0, source_tree_tag, is_SR 全对)
+  - Step3 CR config + 4 sbatch: 生成并验证(YAML/bash/字段/checkpoint 复用)
+  - Step4 diag 脚本: 写好(待推理出分后跑)
+  - 一键 driver run_cr_lowIDMVA_v3.sh: 写好
+
+[待用户跑]
+  - Step1+2+3: bash tools/run_cr_lowIDMVA_v3.sh (或分步跑)
+    注意 Step3 要 GPU, 走 sbatch; driver 里 Step3 是前台 python, 大量事件时建议
+    直接用 sbatch job 而不是 driver 的前台循环。
+  - Step4: 推理出分后 $PYTHON tools/diag_cr_lowIDMVA_v3.py
+
+[待写]
+  - 最终 Z 脚本: 基于 significance_4fold.py, 把 B 换成 B_CR_SR(alpha × N_CR_SR),
+    per cat + GNN score 区, Asimov Z, 5 cat 平方和合并。等 Step4 检查通过后写。
+
+
+七、关键设计决策(已和用户确认)
+------------------------------
+  - CR 只处理 lowIDMVA(不碰 lowPTOverMllg / FSRgamma)
+  - merge 同时提 CR SR + CR SB 两组(方法二第2步要 CR SB 积分), 合成一棵 merged_CR_lowIDMVA
+  - source_tree_tag 按 region 分组(0-4 SR, 5-9 SB), 不是 nominal 的 SR/SB 交替
+  - 不碰 inclusive(避免重复计数), 留原始文件做交叉检查
+  - 推理复用 nominal 4 fold 训练模型, 不重训; CR 单独 config 只为改 tree_name
+  - OOF 选分策略和 nominal 完全一致(parity k → fold{k} 分数)
+  - nominal Data / MC 已完成的 pipeline 不动

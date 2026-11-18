@@ -1,0 +1,310 @@
+Training_Name: hzg_ttH_4class_on_v2_4fold_data_fold3
+Training_Directory: /scratchfs2/cms/huangsuyun/GNN4Colliders/trainings/hzg/ttH_4class_4fold_fold3
+Model:
+  module: models.GCN
+  class: Edge_Network
+  args:
+    hid_size: 64
+    in_size: 6
+    out_size: 4
+    n_layers: 4
+    n_proc_steps: 4
+    dropout: 0
+Loss:
+  module: torch.nn
+  class: CrossEntropyLoss
+  args: {}
+  finish:
+    module: torch.nn
+    class: Softmax
+    args: {dim: 1}
+Training:
+  epochs: 100
+  batch_size: 256
+  learning_rate: 0.0001
+  gamma: 0.99
+Datasets:
+  ttH:
+    args:
+      buffer_size: 2
+      chunks: 4
+      file_names:
+      - Signal/ttH/2022preEE.root
+      - Signal/ttH/2022postEE.root
+      - Signal/ttH/2023preBPix.root
+      - Signal/ttH/2023postBPix.root
+      - Signal/ttH/2024.root
+      - Signal/ttH/2025.root
+      fold_var: photon_eta_fold
+      label: 1
+      node_branch_names:
+      - - jet0_pt
+        - jet1_pt
+        - jet2_pt
+        - jet3_pt
+        - jet4_pt
+        - jet5_pt
+        - bjet0_pt
+        - bjet1_pt
+        - lep0_pt_div_mllg
+        - lep1_pt_div_mllg
+        - lep2_pt_div_mllg
+        - lep3_pt_div_mllg
+        - lep4_pt_div_mllg
+        - lep5_pt_div_mllg
+        - photon_pt_div_mllg
+        - MET_pt
+      - - jet0_eta
+        - jet1_eta
+        - jet2_eta
+        - jet3_eta
+        - jet4_eta
+        - jet5_eta
+        - bjet0_eta
+        - bjet1_eta
+        - lep0_eta
+        - lep1_eta
+        - lep2_eta
+        - lep3_eta
+        - lep4_eta
+        - lep5_eta
+        - photon_eta
+        - 0
+      - - jet0_phi
+        - jet1_phi
+        - jet2_phi
+        - jet3_phi
+        - jet4_phi
+        - jet5_phi
+        - bjet0_phi
+        - bjet1_phi
+        - lep0_phi
+        - lep1_phi
+        - lep2_phi
+        - lep3_phi
+        - lep4_phi
+        - lep5_phi
+        - photon_phi
+        - MET_phi
+      - - jet0_hzg_btag_score
+        - jet1_hzg_btag_score
+        - jet2_hzg_btag_score
+        - jet3_hzg_btag_score
+        - jet4_hzg_btag_score
+        - jet5_hzg_btag_score
+        - bjet0_hzg_btag_score
+        - bjet1_hzg_btag_score
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - photon_id_mva
+        - 0
+      - - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - lep0_pdgId
+        - lep1_pdgId
+        - lep2_pdgId
+        - lep3_pdgId
+        - lep4_pdgId
+        - lep5_pdgId
+        - 22
+        - 0
+      - NODE_TYPE
+      node_branch_types:
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      node_feature_scales:
+      - 0.1
+      - 1
+      - 1
+      - 1
+      - 0.1
+      - 1
+      raw_dir: /scratchfs2/cms/huangsuyun/GNN4Colliders/root_p2root_v2_pt_only_data
+      save_dir: /scratchfs2/cms/huangsuyun/GNN4Colliders/graphs/hzg/ttH_pt_only_4fold_data
+      tracking_info: []
+      tree_name: merged_SR_Sideband
+      name: ttH
+    batch_size: 256
+    class: LazyDataset
+    module: root_gnn_base.dataset
+    padding_mode: NONE
+    shuffle_chunks: 4
+    shuffle_seed: 314159
+  other:
+    args:
+      buffer_size: 2
+      chunks: 32
+      file_names:
+      - Signal/VH/2022preEE.root
+      - Signal/VH/2022postEE.root
+      - Signal/VH/2023preBPix.root
+      - Signal/VH/2023postBPix.root
+      - Signal/VH/2024.root
+      - Signal/VH/2025.root
+      - Signal/ggF/2022preEE.root
+      - Signal/ggF/2022postEE.root
+      - Signal/ggF/2023preBPix.root
+      - Signal/ggF/2023postBPix.root
+      - Signal/ggF/2024.root
+      - Signal/ggF/2025.root
+      - Signal/VBF/2022preEE.root
+      - Signal/VBF/2022postEE.root
+      - Signal/VBF/2023preBPix.root
+      - Signal/VBF/2023postBPix.root
+      - Signal/VBF/2024.root
+      - Signal/VBF/2025.root
+      - Bkg_MC/TT/2022preEE.root
+      - Bkg_MC/TT/2022postEE.root
+      - Bkg_MC/TT/2023preBPix.root
+      - Bkg_MC/TT/2023postBPix.root
+      - Bkg_MC/TT/2024.root
+      - Bkg_MC/TT/2025.root
+      - Bkg_MC/DYGto2LG_10to100/2022preEE.root
+      - Bkg_MC/DYGto2LG_10to100/2022postEE.root
+      - Bkg_MC/DYGto2LG_10to100/2023preBPix.root
+      - Bkg_MC/DYGto2LG_10to100/2023postBPix.root
+      - Bkg_MC/DYGto2LG_10to100/2024.root
+      - Bkg_MC/DYGto2LG_10to100/2025.root
+      fold_var: photon_eta_fold
+      label: 0
+      node_branch_names:
+      - - jet0_pt
+        - jet1_pt
+        - jet2_pt
+        - jet3_pt
+        - jet4_pt
+        - jet5_pt
+        - bjet0_pt
+        - bjet1_pt
+        - lep0_pt_div_mllg
+        - lep1_pt_div_mllg
+        - lep2_pt_div_mllg
+        - lep3_pt_div_mllg
+        - lep4_pt_div_mllg
+        - lep5_pt_div_mllg
+        - photon_pt_div_mllg
+        - MET_pt
+      - - jet0_eta
+        - jet1_eta
+        - jet2_eta
+        - jet3_eta
+        - jet4_eta
+        - jet5_eta
+        - bjet0_eta
+        - bjet1_eta
+        - lep0_eta
+        - lep1_eta
+        - lep2_eta
+        - lep3_eta
+        - lep4_eta
+        - lep5_eta
+        - photon_eta
+        - 0
+      - - jet0_phi
+        - jet1_phi
+        - jet2_phi
+        - jet3_phi
+        - jet4_phi
+        - jet5_phi
+        - bjet0_phi
+        - bjet1_phi
+        - lep0_phi
+        - lep1_phi
+        - lep2_phi
+        - lep3_phi
+        - lep4_phi
+        - lep5_phi
+        - photon_phi
+        - MET_phi
+      - - jet0_hzg_btag_score
+        - jet1_hzg_btag_score
+        - jet2_hzg_btag_score
+        - jet3_hzg_btag_score
+        - jet4_hzg_btag_score
+        - jet5_hzg_btag_score
+        - bjet0_hzg_btag_score
+        - bjet1_hzg_btag_score
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - photon_id_mva
+        - 0
+      - - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - 0
+        - lep0_pdgId
+        - lep1_pdgId
+        - lep2_pdgId
+        - lep3_pdgId
+        - lep4_pdgId
+        - lep5_pdgId
+        - 22
+        - 0
+      - NODE_TYPE
+      node_branch_types:
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      - single
+      node_feature_scales:
+      - 0.1
+      - 1
+      - 1
+      - 1
+      - 0.1
+      - 1
+      raw_dir: /scratchfs2/cms/huangsuyun/GNN4Colliders/root_p2root_v2_pt_only_data
+      save_dir: /scratchfs2/cms/huangsuyun/GNN4Colliders/graphs/hzg/ttH_pt_only_4fold_data
+      tracking_info: []
+      tree_name: merged_SR_Sideband
+      name: other
+    batch_size: 256
+    class: LazyDataset
+    module: root_gnn_base.dataset
+    padding_mode: NONE
+    shuffle_chunks: 32
+    shuffle_seed: 314159

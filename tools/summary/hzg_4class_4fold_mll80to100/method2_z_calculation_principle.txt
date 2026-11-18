@@ -1,0 +1,233 @@
+HZγ ttH 4-class v3 — 方法二 (CR data-driven) Z 计算原理 Summary
+==============================================================
+更新日期: 2026-11-03
+
+本文件记录 v3 (Mll80to100) 4-class 分析里"方法二"(用 CR_lowIDMVA data 做
+data-driven 背景估计) 最终显著度 Z 的计算原理。对照 tools/significance_4fold.py
+(旧版 2-class MC-counting 背景的 Z 脚本) 逐处标注差异, 避免只改了背景公式却改变了
+原来的统计定义。最终脚本 significance_4class_v3_cr.py 据此实现。
+
+
+0. 核心概念: 四分类 ≠ 四个信号
+================================
+模型是四分类(label 0=bkg, 1=ttH, 2=VH, 3=ggF+VBF), 但物理目标只有一个: 寻找 ttH。
+
+  - 训练用四类是为了让网络学会区分四种物理过程, 提高 ttH 判别能力。
+  - Z 计算只针对 ttH 这一个信号, 不算 VH/ggF/VBF 各自的 Z。
+  - bkg、VH、ggF、VBF 都不是要测的 signal —— 它们是 ttH 以外的过程。
+
+四分类 vs 三分箱(易混淆):
+  - 四分类 = 模型输出维度(softmax 4 维)。
+  - 三分箱 = 显著度分析时对 ttH score(p_ttH) 的分箱(low/medium/high)。
+  取出 p_ttH 后, 它是 0-1 的连续分数, 用 c1/c2 分成三段。
+
+
+1. 模型输出与 discriminant
+============================
+四分类最后一层 4 个输出经 Softmax:
+    p = (p_bkg, p_ttH, p_VH, p_ggFVBF),  四者之和 = 1。
+
+Z 计算取第二维作 discriminant:
+    score_ttH = p_ttH = Softmax[:, 1]   (label 1 对应 ttH)
+
+★ 对照 significance_4fold.py:
+  旧版是 2-class, ttH_gnn_score 本身就是 ttH 分数(标量分支), 直接用。
+  v3 多分类下 ttH_gnn_score 是 vector<float>(4 维), 要取 index 1。
+  ★ uproot 读 vector<float> 是 object dtype 1D array(每行一个小 ndarray),
+    必须先 np.stack([np.asarray(v) for v in sc]) 转成 (N,4) 再 [:,1]。
+    (diag_cr_lowIDMVA_v3.py 已修过这个读取 bug, Z 脚本要沿用同一修法。)
+
+
+2. ttH score 的三分箱 (low/medium/high)
+=========================================
+取 p_ttH 后, 用两个阈值 c1 < c2 分三区:
+    Low   : 0    ≤ score < c1
+    Medium: c1   ≤ score < c2
+    High  : c2   ≤ score ≤ 1
+
+c1/c2 不固定, 由 Optuna 在 validation fold 上优化(最大化 val 的 Z), 再应用到
+独立的 test fold 得最终 Z(不能在 test 上重新找阈值, 否则选择偏差)。
+
+★ 对照 significance_4fold.py:
+  旧版 evaluate_3cat(c1, c2) 就是这套三分箱, 直接复用结构。
+  边界范围 C1_MIN/MAX, C2_MIN/MAX, MIN_GAP 沿用; N_TRIALS, optuna TPESampler 沿用。
+  唯一变化: evaluate_3cat 内部的 B 计算换成 CR transfer factor(见第 3 节)。
+
+
+3. 方法二背景估计 (核心改动)
+==============================
+对每个分析 category i、每个 score 区 j, 分别算:
+    α(i,j) = N_Data_SB(i,j) / N_CR_SB(i,j)
+    B(i,j) = α(i,j) × N_CR_SR(i,j) = N_Data_SB(i,j) × N_CR_SR(i,j) / N_CR_SB(i,j)
+
+三个数据计数:
+  ┌──────────────────┬──────────────────────────────────────────────────────┐
+  │ 符号             │ 来源                                                 │
+  ├──────────────────┼──────────────────────────────────────────────────────┤
+  │ N_Data_SB(i,j)   │ nominal Data 的 sideband 事件数                      │
+  │                  │ tree=merged_SR_Sideband, is_SR==0 选 SB              │
+  │                  │ (nominal source_tree_tag 奇=SB, 但用 is_SR 更稳)     │
+  │                  │ m_llg 在 SB 区(110-120 ∪ 130-180), category i, score 区 j │
+  ├──────────────────┼──────────────────────────────────────────────────────┤
+  │ N_CR_SB(i,j)     │ CR Data 的 sideband 事件数                           │
+  │                  │ tree=merged_CR_lowIDMVA, source_tree_tag 5-9 = CR SB │
+  │                  │ m_llg 在 SB 区, category i (tag%5), score 区 j       │
+  ├──────────────────┼──────────────────────────────────────────────────────┤
+  │ N_CR_SR(i,j)     │ CR Data 的 SR 区事件数                               │
+  │                  │ tree=merged_CR_lowIDMVA, source_tree_tag 0-4 = CR SR │
+  │                  │ m_llg 在 SR(120-130), category i (tag%5), score 区 j │
+  └──────────────────┴──────────────────────────────────────────────────────┘
+
+★ 对照 significance_4fold.py:
+  旧版 B = yield_info(background[WEIGHT][bm])["sum"], 即所有 bkg MC(TT+DYG+...)
+  在该 category/score 区的加权产额。方法二完全不用 MC 的 B, 换成 B_CR_SR。
+  旧版 signal 仍用 ttH MC 加权: S = yield_info(signal[WEIGHT][sm])["sum"],
+  这部分不变(S 仍来自 ttH MC OOF 推理, 用 weight_lumi_avg 加权)。
+
+★ 权重处理(沿用旧版 yield_info, 不改统计定义):
+  MC(ttH signal): 用 weight_lumi 加权求产额 S, err_S = sqrt(sum(w^2)), neff。
+  Data(nominal SB / CR): Data 的 weight_lumi=1.0(v3), 所以 N_Data_SB / N_CR_SB /
+    N_CR_SR 就是计数(加权后等于计数)。为统一起见仍走 yield_info, sum 即计数。
+
+★ source_tree_tag 布局差异(两边选事件逻辑要分开, 这是最大坑):
+  nominal(merged_SR_Sideband): SR/SB 交替, 偶=SR, 奇=SB, tag//2 = category index
+    SR_TAG_MAP = {0:ttHhad, 2:ttHlep, 4:untag, 6:VH3l, 8:VHpTmiss}, SB = tag+1
+    (旧版 significance_4fold.py 用的就是这个; 还可读 is_SR 分支 ==1 SR/==0 SB)
+  CR(merged_CR_lowIDMVA): 按 region 分组, 0-4=CR SR, 5-9=CR SB, tag%5 = category index
+    CR_SR_TAG = {0:ttHhad, 1:ttHlep, 2:untag, 3:VH3l, 4:VHpTmiss}
+    CR_SB_TAG = {5:ttHhad, 6:ttHlep, 7:untag, 8:VH3l, 9:VHpTmiss}
+  5 个分析 category 两边一致。Z 脚本要为 nominal 和 CR 写两套选事件逻辑。
+
+
+4. Asimov Z 与误差传播
+========================
+无本底不确定度的 Asimov Z(供理解, 不是最终结果):
+    Z_A = sqrt( 2[(S+B) ln(1 + S/B) - S] )
+
+本底统计误差(CR transfer factor 传播, 独立无权重 Poisson 近似):
+    (σ_B / B)^2 = 1/N_Data_SB + 1/N_CR_SB + 1/N_CR_SR
+    σ_B = B × sqrt( 1/N_Data_SB + 1/N_CR_SB + 1/N_CR_SR )
+
+ttH MC 的信号统计误差: σ_S = sqrt(sum(w^2)) (yield_info 的 err)。
+
+★ 对照 significance_4fold.py (z_uncertainty, 不改形式, 只换 σ_B 来源):
+  旧版:
+    z = asimov_z(s, b)
+    log_term = ln(1 + s/b)
+    dz/ds = log_term / z
+    dz/db = (log_term - s/b) / z
+    σ_Z = hypot(dz/ds × σ_S,  dz/db × σ_B)
+  方法二沿用这个函数, 唯一变化: σ_B 不再是 MC 的 sqrt(sum(w^2)),
+  而是 CR transfer factor 传播的 σ_B(上面那个公式)。
+  σ_S 仍是 ttH MC 的 sqrt(sum(w^2))。
+  ★ 不能直接用无误差 Asimov 当最终结果, 必须带这个 σ_Z。
+
+
+5. 合并结构 (5 category × 3 score 区 × 4 fold)
+================================================
+每个 fold k, 每个 category i(1..5), 每个 score 区 j(low/med/high):
+    独立算 S(i,j), B(i,j), Z(i,j), σ_Z(i,j)
+一个 fold 内合并(平方和, 15 个区域互斥):
+    Z_k = sqrt( Σ_i Σ_j Z(i,j)^2 )
+四个 fold 最终合并:
+    Z_total = sqrt( Z_0^2 + Z_1^2 + Z_2^2 + Z_3^2 )
+
+误差传播(combined_z 沿用旧版):
+    σ_Z_total^2 = Σ_k ( (Z_k / Z_total) × σ_Z_k )^2
+    σ_Z_k^2     = Σ_i,j ( (Z(i,j) / Z_k) × σ_Z(i,j) )^2
+
+★ 对照 significance_4fold.py:
+  旧版 combined_z(results) 就是平方和 + 这个误差传播, 直接复用。
+  旧版每 fold 是 5 cat × 3 score 区 = 15 个 Z 平方和; 方法二结构完全一样,
+  只是每个 Z 的 B 来源换了。旧版的 cut-based 对照表(5 cat 不分 score 区)可保留作参考。
+
+
+6. OOF 选分 (4 fold, 和 nominal 同策略, CR 必须遵守)
+======================================================
+fold 轮转(同旧 4fold):
+    fold0: test=[0] val=[1] train=[2,3]
+    fold1: test=[1] val=[2] train=[3,0]
+    fold2: test=[2] val=[3] train=[0,1]
+    fold3: test=[3] val=[0] train=[1,2]
+  TEST_PARITY  = {0:0, 1:1, 2:2, 3:3}
+  VALID_PARITY = {0:1, 1:2, 2:3, 3:0}
+
+每个事件用 photon_eta_fold % 4 = parity 选 fold 目录的分数:
+    parity k 的事件 → 用 fold{k} 的分数(没见过它的模型, OOF)。
+  nominal 和 CR 都按这个选, 两边都要 4 fold 目录(已齐)。
+
+★ 对照 significance_4fold.py:
+  旧版 select_sr_parity(arr, parity) 用 (FOLDVAR % 4) == parity 选事件, 复用。
+  旧版 DATA_DIR 只有 fold0 一个目录(2-fold 旧模型), Data SB 只在 fold0 val 用作约束;
+  v3 nominal Data 有 4 fold 目录, 所以 Data SB 也按 OOF 选分(parity 对应 fold 目录)。
+  CR 同理, 4 fold 目录都按 OOF 选。这是和旧版一个重要区别: 旧版 Data 只用 fold0,
+  v3 Data/CR 都全 4 fold OOF。
+
+
+7. 三个最容易出错的问题 (实现时重点检查)
+==========================================
+问题一: VH/ggF/VBF 算不算背景?
+  对 ttH 测量: ttH 是 signal, VH/ggF/VBF 都不是要测的 signal。
+  方法二 B = B_CR_SR, 用 CR 数据估计本底。如果 CR 方法已覆盖所有非 ttH 本底,
+  就不能再把 VH/ggF/VBF 的 MC yield 加一遍(重复计算)。
+  要检查: VH/ggF/VBF 在 CR 中的贡献, 以及 CR SR 里的 ttH 信号污染。
+  (本期 Z 脚本: B 只用 CR transfer factor, 不加任何 MC 本底; signal 污染检查留 diag。)
+
+问题二: CR SB 统计稀, α 不稳。
+  ttHhad/ttHlep/VH3l 这些 category 单 era CR SB 个位数事件。某个 score 区
+  CR SB = 0 时 α 无法算, 不能当零本底。需要:
+    - N_CR_SB > 0 的保护(同旧版 MIN_B_NEFF / MIN_HIGH_DATA_SB_YIELD guard 思路)
+    - 低统计时合并 score 区 / 合并 category, 或更合适的统计模型。
+  Z 脚本要保留 guard: 某区域 N_CR_SB==0 → 该区域跳过或标 invalid(不当 0)。
+
+问题三: Optuna 优化对象。
+  在 validation fold 上优化 c1/c2, 最大化:
+    Z_val = sqrt( Σ_5cat Σ_3区 Z^2 )   (val 集, 用 val 的 S/α/B/σ)
+  找到的 c1/c2 应用到独立 test fold 得最终 Z_test。
+  不能在 test 上重新找阈值(选择偏差)。
+  ★ 对照 significance_4fold.py: 旧版 optimize_bayesian 在 sig_val/bkg_val 上优化,
+    再 evaluate_3cat(sig_test, bkg_test, c1_best, c2_best)。方法二沿用这个 val/test 分离,
+    只是 val/test 的 B 都换成 CR transfer factor(val 集也要算 α, 用 val 的 N_Data_SB/N_CR_SB/N_CR_SR)。
+
+
+8. 流程总览 (对应 v3 workflow 第五节)
+=======================================
+环节              使用什么                              目的
+─────────────────────────────────────────────────────────────────────
+GNN 训练          bkg/ttH/VH/ggF+VBF 四类               学四种过程差异
+GNN discriminant  Softmax ttH 维 (p_ttH = [:,1])         区分 ttH vs 非 ttH
+Score 分箱        Low/Medium/High (c1/c2)                划三个统计区域
+Signal S          ttH MC SR, OOF, weight_lumi_avg 加权   得 S
+Background B      N_Data_SB/N_CR_SB × N_CR_SR (CR TF)    得 B (data-driven)
+Asimov Z          带 σ_B(CR TF 传播)+σ_S(MC)            各区域显著度 + 误差
+最终合并          5 cat × 3 区 × 4 fold 平方和           Z_total + σ_Z_total
+
+
+9. Z 脚本结构 (significance_4class_v3_cr.py, 基于 significance_4fold.py 改)
+===========================================================================
+保留(不改):
+  - asimov_z(s, b)
+  - yield_info(weights)              # MC 加权产额 + err + neff
+  - z_uncertainty(s, b, σ_s, σ_b)    # 形式不变, σ_b 来源变
+  - combined_z(results)              # 平方和 + 误差传播
+  - select_sr_parity(arr, parity)    # nominal SR+parity 选事件
+  - optimize_bayesian(...)           # val 上优化 c1/c2
+  - TEST_PARITY / VALID_PARITY / FOLD_PLAN
+  - mass 窗口 SR 120-130, SB 110-120 ∪ 130-180
+  - optuna TPESampler + N_TRIALS
+
+新增/改:
+  - 读 score: object array → np.stack → [:,1] (multiclass)
+  - CR 选事件逻辑: source_tree_tag 0-4=SR / 5-9=SB, tag%5=category (和 nominal 分开)
+  - nominal Data SB 选事件: is_SR==0 (或 tag 奇), m_llg 在 SB, OOF parity
+  - B 计算: B = N_Data_SB × N_CR_SR / N_CR_SB (替代 MC bkg yield)
+  - σ_B: B×sqrt(1/N_Data_SB + 1/N_CR_SB + 1/N_CR_SR) (替代 MC sqrt(sumw2))
+  - 每 fold 15 个区域(5 cat × 3 区), 各自 S/B/Z/σ_Z, 平方和合并
+  - guard: N_CR_SB==0 或 N_CR_SR==0 的区域跳过/标 invalid
+  - 路径: nominal MC scored / nominal Data scored / CR Data scored 三套, 各 4 fold
+  - era: Run2+Run3 全 11 个(不是旧版只 6 个 Run3)
+
+数据目录(都已就绪):
+  nominal MC:  root_p2root_v3_pt_only_scored_ttH_4class_4fold_fold<k>/{Signal,Bkg_MC}/...
+  nominal Data: root_p2root_v3_pt_only_scored_ttH_4class_4fold_data_fold<k>/Data/Data/
+  CR Data:     root_p2root_v3_cr_pt_only_scored_ttH_4class_4fold_fold<k>/Data/Data/

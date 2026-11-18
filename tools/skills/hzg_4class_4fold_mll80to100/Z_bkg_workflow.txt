@@ -1,0 +1,1077 @@
+# Workflow：HZγ ttH 4-Class v3 — Bkg MC Scaled Significance Calculation
+
+**分析版本：** v3 (Mll80to100)  
+**模型：** 4-Class GNN, 4-Fold OOF  
+**背景估计：** Background MC Sideband Scaling  
+**目标：** 联合优化三个分类 cut，计算四个 category 的显著度。
+
+---
+
+# 1. 研究目标
+
+本 workflow 替换之前的 CR data-driven background estimation 方法。
+
+之前使用：
+
+\[
+B_i=
+\frac{N_{\mathrm{Data,SB},i}}
+{N_{\mathrm{CR,SB},i}}
+N_{\mathrm{CR,SR},i}
+\]
+
+由于 CR Data 统计量不足，本次改用 Background MC 估计背景，并利用 Nominal Data Sideband 对 Background MC 进行整体归一化。
+
+新的方法：
+
+\[
+\boxed{
+\alpha=
+\frac{N_{\mathrm{Data,SB}}}
+{Y_{\mathrm{BkgMC,SB}}}
+}
+\]
+
+\[
+\boxed{
+B_i=\alpha Y_{\mathrm{BkgMC,SR},i}
+}
+\]
+
+其中：
+
+- \(N_{\mathrm{Data,SB}}\)：Nominal Data 在 Sideband 中的实际事例数。
+- \(Y_{\mathrm{BkgMC,SB}}\)：所有 Background MC 在 Sideband 中的加权 yield。
+- \(Y_{\mathrm{BkgMC,SR},i}\)：Background MC 在 SR、GNN category \(i\) 中的加权 yield。
+- \(\alpha\)：Data 与 Background MC 之间的整体归一化因子。
+
+本次分析保留原有的：
+
+1. 4-Class GNN 模型。
+2. 四个 score 分量。
+3. 三个独立的 category cut。
+4. 四个互斥 category。
+5. 四折 OOF 数据划分。
+6. Validation 优化、Test 独立评估。
+7. Asimov significance 和误差诊断。
+
+不修改 Step1 merge、Step2 pt_only、训练配置和 inference 代码。
+
+不再读取 CR Data，也不再使用 `merged_CR_lowIDMVA`。
+
+---
+
+# 2. 输入样本
+
+工作目录：
+
+```text
+/scratchfs2/cms/huangsuyun/GNN4Colliders/
+```
+
+使用之前已经完成推理的 scored ROOT 文件。
+
+## 2.1 Signal MC
+
+所有 Higgs 产生过程都作为 Signal：
+
+```text
+Signal/ttH/
+Signal/VH/
+Signal/ggF/
+Signal/VBF/
+```
+
+四种产生过程全部参与 Signal yield 计算。
+
+其中：
+
+- ttH：label=1
+- VH：label=2
+- ggF：label=3
+- VBF：label=3
+
+ggF 和 VBF 在模型中属于同一个训练类别，但计算 Signal yield 时仍然分别统计，最后合并。
+
+总 Signal：
+
+\[
+S_i=
+S_{\mathrm{ttH},i}
++S_{\mathrm{VH},i}
++S_{\mathrm{ggF},i}
++S_{\mathrm{VBF},i}
+\]
+
+## 2.2 Background MC
+
+使用以下全部七个背景样本：
+
+```text
+Bkg_MC/TT/
+Bkg_MC/DYGto2LG_10to100/
+Bkg_MC/DYGto2LG_100to200/
+Bkg_MC/DYGto2LG_200to400/
+Bkg_MC/DYGto2LG_400to600/
+Bkg_MC/DYGto2LG_600/
+Bkg_MC/DYJetsToLL_Stitch/
+```
+
+这些样本在 4-class 模型中的训练 label 均为 0。
+
+所有存在的 era 文件都需要使用。
+
+特别注意：
+
+- 不要只使用 TT 和 DYGto2LG_10to100。
+- 不要遗漏高质量点 DYG。
+- 保留 DYJetsToLL_Stitch。
+- 检查 DYJetsToLL_Stitch 与其他 DYG 样本的生成定义及可能的重叠，不能未经核实就重复计数。
+
+Background MC 的总 yield：
+
+\[
+Y_{\mathrm{Bkg}}=
+Y_{\mathrm{TT}}+
+Y_{\mathrm{DYG10-100}}+
+Y_{\mathrm{DYG100-200}}+
+Y_{\mathrm{DYG200-400}}+
+Y_{\mathrm{DYG400-600}}+
+Y_{\mathrm{DYG600}}+
+Y_{\mathrm{DYJetsStitch}}
+\]
+
+## 2.3 Nominal Data
+
+使用：
+
+```text
+Data/Data/
+```
+
+所有 11 个 era。
+
+Data 的权重为 1，直接统计事件数量。
+
+Data 只使用 Sideband 估计背景归一化，不使用 SR Data 计算背景。
+
+## 2.4 CR Data
+
+本次完全不使用 CR Data。
+
+不需要读取：
+
+```text
+root_p2root_v3_cr_pt_only/
+root_p2root_v3_cr_pt_only_scored_.../
+```
+
+也不需要重新运行 CR inference。
+
+---
+
+# 3. 输入目录
+
+沿用之前的四折 scored 目录。
+
+MC：
+
+```text
+root_p2root_v3_pt_only_scored_ttH_4class_4fold_fold0/
+root_p2root_v3_pt_only_scored_ttH_4class_4fold_fold1/
+root_p2root_v3_pt_only_scored_ttH_4class_4fold_fold2/
+root_p2root_v3_pt_only_scored_ttH_4class_4fold_fold3/
+```
+
+每个目录包含：
+
+```text
+Signal/
+Bkg_MC/
+```
+
+Nominal Data：
+
+```text
+root_p2root_v3_pt_only_scored_ttH_4class_4fold_data_fold0/
+root_p2root_v3_pt_only_scored_ttH_4class_4fold_data_fold1/
+root_p2root_v3_pt_only_scored_ttH_4class_4fold_data_fold2/
+root_p2root_v3_pt_only_scored_ttH_4class_4fold_data_fold3/
+```
+
+对应：
+
+```text
+Data/Data/
+```
+
+使用的 TTree：
+
+```text
+merged_SR_Sideband
+```
+
+主要 Branch：
+
+```text
+m_llg
+ttH_gnn_score
+photon_eta_fold
+weight_lumi
+weight_lumi_avg
+```
+
+权重选择必须先检查现有 v3 significance 脚本的 `WEIGHT` 配置。
+
+本次数据处理总结规定 `weight_lumi_avg` 是 Z 计算使用的权重，但之前的 significance 代码中也出现过 `weight_lumi`。
+
+Agent 必须核对实际脚本和分支定义，发现不一致时先报告，不得自行静默替换。
+
+正式计算中：
+
+- Signal MC 的 S 使用统一确认的 MC 权重分支。
+- Background MC 的 SB 和 SR 使用同一个 MC 权重分支。
+- Data 直接使用事件数，不加权。
+- 不允许同时将 `weight_lumi` 和 `weight_lumi_avg` 相乘。
+
+---
+
+# 4. SR 和 SB 选择
+
+本次完全通过质量窗口选择 SR 和 SB。
+
+不使用 `source_tree_tag` 或 `is_SR` 判断质量区域。
+
+Signal Region：
+
+\[
+120<m_{\ell\ell\gamma}<130\ \mathrm{GeV}
+\]
+
+Lower Sideband：
+
+\[
+110\leq m_{\ell\ell\gamma}<120\ \mathrm{GeV}
+\]
+
+Upper Sideband：
+
+\[
+130<m_{\ell\ell\gamma}\leq180\ \mathrm{GeV}
+\]
+
+Combined Sideband：
+
+\[
+SB=[110,120)\cup(130,180]
+\]
+
+不同样本的用途：
+
+| 样本 | SR | SB |
+|---|---|---|
+| Signal MC | 计算 S | 不参与最终 S |
+| Background MC | 计算 B | 计算 alpha |
+| Nominal Data | 不使用 | 计算 alpha |
+
+特别注意：Signal MC 不参与背景归一化。
+
+---
+
+# 5. 4-Class GNN 分类
+
+模型输出四个 score：
+
+\[
+(p_{\mathrm{bkg}},p_{\mathrm{ttH}},
+p_{\mathrm{VH}},p_{\mathrm{ggF+VBF}})
+\]
+
+预期列顺序：
+
+```text
+0: p_bkg
+1: p_ttH
+2: p_VH
+3: p_ggFVBF
+```
+
+正式使用前必须检查训练 config 中的 label encoding 和 inference 输出，确认列顺序。
+
+首先：
+
+\[
+k_{\max}=\arg\max_k p_k
+\]
+
+使用三个独立 cut：
+
+\[
+c_{\mathrm{ttH}},\quad
+c_{\mathrm{VH}},\quad
+c_{\mathrm{ggF+VBF}}
+\]
+
+四个 category 的定义：
+
+### 5.1 ttH-enriched
+
+\[
+k_{\max}=\mathrm{ttH}
+\]
+
+且：
+
+\[
+p_{\mathrm{ttH}}>c_{\mathrm{ttH}}
+\]
+
+### 5.2 VH-enriched
+
+\[
+k_{\max}=\mathrm{VH}
+\]
+
+且：
+
+\[
+p_{\mathrm{VH}}>c_{\mathrm{VH}}
+\]
+
+### 5.3 ggF+VBF-enriched
+
+\[
+k_{\max}=\mathrm{ggF+VBF}
+\]
+
+且：
+
+\[
+p_{\mathrm{ggF+VBF}}>c_{\mathrm{ggF+VBF}}
+\]
+
+### 5.4 Other
+
+所有不满足前三种条件的事件。
+
+包括：
+
+- \(p_{\mathrm{bkg}}\) 最大的事件。
+- 最大 score 是 ttH，但没有通过 ttH cut。
+- 最大 score 是 VH，但没有通过 VH cut。
+- 最大 score 是 ggF+VBF，但没有通过对应 cut。
+
+Other 不需要额外设置 cut。
+
+**重要原则：**
+
+所有 Signal MC、Background MC 和 Nominal Data 必须使用相同的 score 分类规则。
+
+不能根据 MC truth 决定 category。
+
+例如，真实的背景事件如果 ttH score 最大且通过 ttH cut，也应该进入 ttH-enriched。
+
+四个 category 必须互斥且覆盖全部事件。
+
+---
+
+# 6. 四折 OOF 划分
+
+完全沿用之前的 4-fold OOF。
+
+| Model fold | Validation parity | Test parity |
+|---|---:|---:|
+| Fold 0 | 1 | 0 |
+| Fold 1 | 2 | 1 |
+| Fold 2 | 3 | 2 |
+| Fold 3 | 0 | 3 |
+
+Parity：
+
+\[
+\mathrm{parity}
+=
+\mathrm{photon\_eta\_fold}\bmod4
+\]
+
+每个 fold：
+
+1. 使用对应的 scored ROOT 文件。
+2. 选择 Validation parity。
+3. 在 Validation 上联合优化三个 cut。
+4. 固定三个 cut。
+5. 应用到 Test parity。
+6. 计算 Test 的 S、B 和 Z。
+
+Test 数据不能参与 cut 优化。
+
+---
+
+# 7. Background MC Sideband Scaling
+
+这是本次修改最重要的部分。
+
+## 7.1 计算 Data SB
+
+对每个 fold 的 Validation 或 Test parity：
+
+读取 Nominal Data。
+
+只选择 Combined SB：
+
+\[
+N_{\mathrm{Data,SB}}
+=
+N_{\mathrm{Data}}^{110-120}
++
+N_{\mathrm{Data}}^{130-180}
+\]
+
+这里统计所有五个原始分析 category 的 Data 事件。
+
+不需要按照 GNN category 分别计算。
+
+## 7.2 计算 Background MC SB
+
+读取全部七种 Background MC。
+
+选择 Combined SB。
+
+计算加权总 yield：
+
+\[
+Y_{\mathrm{Bkg,SB}}
+=
+\sum_{p\in\mathrm{Bkg}}
+\sum_{e\in SB}w_e
+\]
+
+其中 \(p\) 表示七种背景 process。
+
+所有背景样本合并计算，不按照 GNN category 分别归一化。
+
+## 7.3 计算统一 alpha
+
+\[
+\boxed{
+\alpha=
+\frac{N_{\mathrm{Data,SB}}}
+{Y_{\mathrm{Bkg,SB}}}
+}
+\]
+
+**每个 fold 的 Validation 或 Test 评估使用一个统一 alpha。四个 GNN category 共用这个 alpha。**
+
+例如：
+
+```text
+Fold 0 Validation:
+    alpha_val_0
+
+Fold 0 Test:
+    alpha_test_0
+
+Fold 1 Validation:
+    alpha_val_1
+
+Fold 1 Test:
+    alpha_test_1
+```
+
+Validation 和 Test 分别计算自己的 alpha，避免 Test 数据参与 cut 优化。
+
+绝对不能这样做：
+
+```text
+alpha_ttH
+alpha_VH
+alpha_ggFVBF
+alpha_Other
+```
+
+本次主分析不采用 category-dependent alpha。
+
+另外，输出一个四 category 分别计算 alpha 的诊断结果即可，但不能用它替代主分析的统一 alpha。
+
+## 7.4 计算四个 category 的 Background
+
+首先将 Background MC 的 SR 事件按照 GNN score 和三个 cut 划分为四个 category。
+
+分别计算加权 yield：
+
+\[
+Y_{\mathrm{Bkg,SR},i}
+=
+\sum_{\substack{e\in SR\\category(e)=i}}
+w_e
+\]
+
+然后使用同一个 alpha：
+
+\[
+\boxed{
+B_i=\alpha Y_{\mathrm{Bkg,SR},i}
+}
+\]
+
+具体为：
+
+\[
+B_{\mathrm{ttH}}
+=
+\alpha Y_{\mathrm{Bkg,SR,ttH}}
+\]
+
+\[
+B_{\mathrm{VH}}
+=
+\alpha Y_{\mathrm{Bkg,SR,VH}}
+\]
+
+\[
+B_{\mathrm{ggFVBF}}
+=
+\alpha Y_{\mathrm{Bkg,SR,ggFVBF}}
+\]
+
+\[
+B_{\mathrm{Other}}
+=
+\alpha Y_{\mathrm{Bkg,SR,Other}}
+\]
+
+注意：alpha 在 category 循环之外计算。
+
+不能每个 category 都重新计算 alpha。
+
+---
+
+# 8. Signal Yield
+
+读取四种 Higgs MC：
+
+```text
+Signal/ttH
+Signal/VH
+Signal/ggF
+Signal/VBF
+```
+
+选择 SR，并按照相同的 GNN score 分类规则分配四个 category。
+
+对于 category \(i\)：
+
+\[
+S_i=
+\sum_{\substack{e\in SR\\category(e)=i}}
+w_e
+\]
+
+等价于：
+
+\[
+S_i=
+S_{\mathrm{ttH},i}
++
+S_{\mathrm{VH},i}
++
+S_{\mathrm{ggF},i}
++
+S_{\mathrm{VBF},i}
+\]
+
+四个 category 都必须计算 S。
+
+特别注意：
+
+Other 中可能包含真实的 ttH、VH、ggF、VBF Signal。
+
+这些 Signal 不能丢弃。
+
+建议分别保存四种 Higgs process 的 yield，以及合并后的总 S。
+
+---
+
+# 9. 统计误差
+
+## 9.1 Signal MC
+
+\[
+\sigma_{S_i}
+=
+\sqrt{
+\sum_{\mathrm{Signal},i}w_e^2
+}
+\]
+
+## 9.2 Background MC
+
+对于加权 Background MC：
+
+\[
+Y=\sum w_e
+\]
+
+\[
+\sigma_Y=\sqrt{\sum w_e^2}
+\]
+
+同时计算有效统计量：
+
+\[
+N_{\mathrm{eff}}
+=
+\frac{(\sum w_e)^2}{\sum w_e^2}
+\]
+
+分别检查：
+
+- Bkg MC SB。
+- Bkg MC SR。
+- 四个 category 的 Bkg MC SR。
+
+如果存在负权重，必须保留带符号的 yield，并单独输出负权重事件数。
+
+不能使用原始事件数代替加权 yield。
+
+## 9.3 Alpha 的统计误差
+
+在 Data 和有限 MC 统计量独立的近似下：
+
+\[
+\alpha=
+\frac{N_{\mathrm{Data,SB}}}
+{Y_{\mathrm{Bkg,SB}}}
+\]
+
+\[
+\boxed{
+\left(\frac{\sigma_\alpha}{\alpha}\right)^2
+=
+\frac{1}{N_{\mathrm{Data,SB}}}
++
+\frac{\sigma_{Y_{\mathrm{Bkg,SB}}}^2}
+{Y_{\mathrm{Bkg,SB}}^2}
+}
+\]
+
+## 9.4 Background 误差
+
+\[
+B_i=\alpha Y_{\mathrm{Bkg,SR},i}
+\]
+
+在 SR MC 与 SB MC 统计独立的近似下：
+
+\[
+\boxed{
+\sigma_{B_i}^2
+=
+Y_{\mathrm{Bkg,SR},i}^2\sigma_\alpha^2
++
+\alpha^2\sigma_{Y_{\mathrm{Bkg,SR},i}}^2
+}
+\]
+
+由于四个 category 共用 alpha，它们的背景归一化误差存在相关性。
+
+不要在没有处理协方差的情况下，将四个 category 的背景误差简单当作完全独立。
+
+当前 nominal Asimov Z 和误差传播结果应分开报告。若要把背景不确定度严格纳入显著度，需要进一步实现带相关 nuisance parameter 的 profile-likelihood 方法。
+
+如果：
+
+\[
+Y_{\mathrm{Bkg,SB}}\leq0
+\]
+
+或者其统计量不足以得到可靠的归一化，必须标记为无效，不能直接设 alpha 为零。
+
+---
+
+# 10. Asimov Significance
+
+对四个 category 分别计算：
+
+\[
+\boxed{
+Z_i=
+\sqrt{
+2\left[
+(S_i+B_i)\ln\left(1+\frac{S_i}{B_i}\right)-S_i
+\right]
+}
+\]
+
+得到：
+
+- \(Z_{\mathrm{ttH}}\)
+- \(Z_{\mathrm{VH}}\)
+- \(Z_{\mathrm{ggFVBF}}\)
+- \(Z_{\mathrm{Other}}\)
+
+四个 category 的组合显著度：
+
+\[
+\boxed{
+Z_{\mathrm{fold}}
+=
+\sqrt{
+Z_{\mathrm{ttH}}^2+
+Z_{\mathrm{VH}}^2+
+Z_{\mathrm{ggFVBF}}^2+
+Z_{\mathrm{Other}}^2
+}
+}
+\]
+
+四个 category 都要参与计算。
+
+不能只计算三个 enriched category 而丢弃 Other。
+
+---
+
+# 11. 三个 Cut Point 联合优化
+
+需要同时优化：
+
+\[
+c_{\mathrm{ttH}},\quad
+c_{\mathrm{VH}},\quad
+c_{\mathrm{ggFVBF}}
+\]
+
+继续使用之前的 Optuna Bayesian optimization 框架。
+
+每个 trial：
+
+1. 生成三个 cut。
+2. 对 Validation 中所有 Signal MC、Background MC、Data 应用相同的分类规则。
+3. 计算 Validation 的 Signal yield。
+4. 计算 Validation 的 Data SB 总数。
+5. 计算 Validation 的 Bkg MC SB 加权 yield。
+6. 计算统一 alpha。
+7. 计算四个 category 的 B。
+8. 计算四个 category 的 Z。
+9. 组合四个 Z，作为 objective。
+
+优化目标：
+
+\[
+\boxed{
+\max
+\sqrt{
+Z_{\mathrm{ttH}}^2+
+Z_{\mathrm{VH}}^2+
+Z_{\mathrm{ggFVBF}}^2+
+Z_{\mathrm{Other}}^2
+}
+}
+\]
+
+注意：
+
+- alpha 对四个 category 统一。
+- alpha 的计算不依赖三个 cut，因为 SB 总量是全部事件的总量。
+- 三个 cut 必须联合优化。
+- 不允许分别优化三个 category。
+- 不允许使用 Test parity 优化。
+- 对有效统计量不足、负的背景 yield 或无法计算 alpha 的 trial 进行惩罚。
+- 不要随意增加过强的 cut 限制，先输出统计诊断再确定要求。
+
+每个 fold 单独优化三个 cut。
+
+---
+
+# 12. Test Evaluation
+
+每个 fold 的 Validation 优化结束后，固定三个 cut。
+
+在 Test parity 上：
+
+1. 选择 Signal MC SR。
+2. 选择 Background MC SR 和 SB。
+3. 选择 Nominal Data SB。
+4. 计算统一 alpha。
+5. 计算四个 category 的 S。
+6. 计算四个 category 的 B。
+7. 计算四个 category 的 Z。
+8. 组合得到该 fold 的 Test Z。
+
+每个 fold 输出：
+
+| Category | S | sigma_S | Bkg MC SR | B | sigma_B | Z |
+|---|---:|---:|---:|---:|---:|---:|
+| ttH-enriched | | | | | | |
+| VH-enriched | | | | | | |
+| ggF+VBF-enriched | | | | | | |
+| Other | | | | | | |
+
+另外输出该 fold 的：
+
+```text
+N_Data_SB
+Y_Bkg_SB
+sigma_Bkg_SB
+alpha
+c_tth
+c_vh
+c_ggfvbf
+```
+
+---
+
+# 13. 四折最终组合
+
+保留原有的四折组合方式。
+
+每个 fold 的 Test parity 互不重叠。
+
+最终：
+
+\[
+\boxed{
+Z_{\mathrm{final}}
+=
+\sqrt{
+\sum_{k=0}^{3}
+\sum_{i=1}^{4}
+Z_{k,i}^2
+}
+}
+\]
+
+其中：
+
+- \(k\)：四个 OOF fold。
+- \(i\)：四个 GNN category。
+
+四个 fold 的 cut 可以不同。
+
+每个 fold 的 Test 结果必须使用对应 fold 在 Validation 上得到的 cut。
+
+建议另外输出一个 pooled diagnostic：
+
+将四个 Test parity 的 Data SB 数量相加，将四个 Test parity 的 Bkg MC SB 加权 yield 相加，计算：
+
+\[
+\alpha_{\mathrm{pooled}}
+=
+\frac{
+\sum_k N_{\mathrm{Data,SB},k}
+}{
+\sum_k Y_{\mathrm{Bkg,SB},k}
+}
+\]
+
+用于检查四折归一化是否一致。
+
+它作为交叉检查，不替代当前逐 fold 的主结果。
+
+---
+
+# 14. 必须输出的诊断和绘图
+
+## 14.1 Background MC 组成
+
+分别输出七种背景样本的：
+
+- SR 原始事件数。
+- SB 原始事件数。
+- SR 加权 yield。
+- SB 加权 yield。
+- sum of weights squared。
+- 负权重事件数。
+- Effective statistics。
+
+检查不同 process 对总 Background MC 的贡献。
+
+## 14.2 Sideband Scaling
+
+每个 fold 的 Validation/Test 分别输出：
+
+- Nominal Data SB 事件数。
+- Bkg MC SB 原始事件数。
+- Bkg MC SB 加权 yield。
+- alpha。
+- alpha 的统计误差。
+
+另外分别计算 Lower SB 和 Upper SB 的 alpha，作为诊断：
+
+\[
+\alpha_{\mathrm{left}}
+=
+\frac{N_{\mathrm{Data,left}}}
+{Y_{\mathrm{Bkg,left}}}
+\]
+
+\[
+\alpha_{\mathrm{right}}
+=
+\frac{N_{\mathrm{Data,right}}}
+{Y_{\mathrm{Bkg,right}}}
+\]
+
+主结果仍然使用 Combined SB 计算的统一 alpha。
+
+如果左右两侧 alpha 差异明显，需要检查背景质量形状建模是否可靠。
+
+## 14.3 Category 诊断
+
+分别画：
+
+- Signal MC 的四个 score 分布。
+- Background MC 的四个 score 分布。
+- Data SB 的四个 score 分布。
+- 各样本 argmax 类别分布。
+- 三个 cut 作用后的四个 category 事件数。
+- 每个 category 中 ttH、VH、ggF、VBF 的 Signal 组成。
+- 每个 category 中七种 Background MC 的组成。
+
+## 14.4 Cut 优化诊断
+
+输出：
+
+- 每个 fold 的三个最优 cut。
+- Optuna trial history。
+- Validation Z 分布。
+- 最优 cut 附近的 Z 稳定性。
+- 四个 category 的 Signal efficiency。
+- 四个 category 的 Background rejection。
+- 各 category 的 Bkg MC 有效统计量。
+
+重点检查 VH cut 是否存在不同 fold 差异过大的情况。
+
+## 14.5 最终显著度
+
+输出：
+
+- 每个 fold 的 Validation Z。
+- 每个 fold 的 Test Z。
+- 每个 category 的 S、B、Z。
+- 四个 fold 的组合 Z。
+- 最终四折组合 Z。
+
+---
+
+# 15. 代码修改要求
+
+新建脚本：
+
+```text
+tools/significance_4class_v3_bkg.py
+```
+
+新建输出目录：
+
+```text
+tools/results_4class_v3_bkg_scaled/
+```
+
+实现时：
+
+1. 先阅读已有的 `significance_4class_v3_cr_4cat.py`。
+2. 尽量复用已有的 ROOT loading、score stacking、category assignment、OOF parity、Asimov Z 和 Optuna 代码。
+3. 不要重新编写一套不必要的框架。
+4. 将 CR loading 函数替换为 Background MC loading 函数。
+5. 删除 CR SR、CR SB 相关计算。
+6. 增加七种 Background MC 的读取。
+7. 将原有 category-dependent alpha 改成统一 alpha。
+8. Alpha 在 category 循环之外计算。
+9. 四个 category 共用同一个 alpha。
+10. 保留四类 S、B、Z 的计算。
+11. 保留 Validation 优化和 Test 评估。
+12. 不覆盖之前的 CR 版本及其输出。
+13. 不修改训练和 inference。
+14. 保留原来的输出风格和绘图格式，避免无关重构。
+
+---
+
+# 16. 正式运行前的检查
+
+先运行 diagnostic，不要直接开始完整 Optuna 优化。
+
+必须确认：
+
+- 七种 Background MC 都被正确读取。
+- 不存在意外遗漏的 era。
+- 不存在重复合并的 DY 样本。
+- 所有 Signal MC 都被正确读取。
+- Nominal Data 全部读取。
+- 四个 score 的列顺序正确。
+- 所有事件都恰好分配到一个 GNN category。
+- Data SB 的计数正确。
+- Background MC SB 的加权 yield 为正且统计量足够。
+- alpha 在不同 fold 之间没有异常差异。
+- 左右两个 sideband 的 alpha 没有明显异常。
+- Background MC 的 SR 和 SB 没有质量窗口重叠。
+- 四个 Test parity 没有遗漏或重复。
+
+如果发现权重分支与旧 Z 脚本不一致，先报告，不要自行决定。
+
+---
+
+# 17. 最终分析逻辑总结
+
+本次分析采用：
+
+**Signal：**
+
+所有 Higgs 产生过程：
+
+\[
+ttH+VH+ggF+VBF
+\]
+
+**Background：**
+
+七种 Background MC：
+
+\[
+TT+DYG_{10-100}+DYG_{100-200}
++DYG_{200-400}+DYG_{400-600}
++DYG_{600}+DYJetsToLL
+\]
+
+**Background normalization：**
+
+使用 Nominal Data Sideband 对全部 Background MC 进行整体归一化：
+
+\[
+\alpha=
+\frac{N_{\mathrm{Data,SB}}}
+{Y_{\mathrm{BkgMC,SB}}}
+\]
+
+**Category：**
+
+```text
+ttH-enriched
+VH-enriched
+ggF+VBF-enriched
+Other
+```
+
+**Background prediction：**
+
+\[
+B_i=\alpha Y_{\mathrm{BkgMC,SR},i}
+\]
+
+四个 category 共用 alpha。
+
+**Optimization：**
+
+在每个 fold 的 Validation 上联合优化三个 cut，以四个 category 的组合 Asimov Z 最大化为目标。
+
+**Final significance：**
+
+在四个 OOF Test fold 上评估并组合：
+
+\[
+Z_{\mathrm{final}}
+=
+\sqrt{\sum_{k=0}^{3}\sum_{i=1}^{4}Z_{k,i}^2}
+\]
+
+最终得到一套基于 4-class GNN 分类、四个互斥 category、Bkg MC Sideband Scaling 和 4-fold OOF 的显著度分析结果。

@@ -1,0 +1,31 @@
+data: Run 2 + Run 3 (2016preVFP/postVFP, 2017, 2018, 2022preEE/postEE, 2023preBPix/postBPix, 2024, 2025)
+fold: all folds
+mass_window: [120.0, 130.0] GeV
+selection: is_SR == 1
+
+--- Single threshold (1-category) ---
+inclusive_S: 4.7490346
+inclusive_B: 5117.3493
+inclusive_asimov_Z: 0.066377
+best_threshold: 0.9850
+best_S: 2.3144465
+best_B: 25.199913
+best_SoverSqrtB: 0.461050
+best_asimov_Z: 0.454249
+
+--- 3-category (optimised) ---
+3cat_t_low: 0.8800
+3cat_t_high: 0.9500
+3cat_score_gt_0.95_S: 3.3334146
+3cat_score_gt_0.95_B: 70.740371
+3cat_score_gt_0.95_Z: 0.393276
+3cat_0.88_lt_score_lteq_0.95_S: 0.48427488
+3cat_0.88_lt_score_lteq_0.95_B: 57.724875
+3cat_0.88_lt_score_lteq_0.95_Z: 0.063651
+3cat_score_lteq_0.88_S: 0.93134506
+3cat_score_lteq_0.88_B: 4988.8841
+3cat_score_lteq_0.88_Z: 0.013185
+3cat_combined_Z: 0.398612
+
+--- 3-category (fixed 0.6/0.9) ---
+3cat_fixed_combined_Z: 0.347888

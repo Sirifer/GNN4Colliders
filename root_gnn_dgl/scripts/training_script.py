@@ -140,7 +140,7 @@ def evaluate(val_loaders, model, config, device, epoch = -1):
     return
 
 
-def train(train_loaders, test_loaders, model, device, config, args, rank):
+def train(train_loaders, test_loaders, val_loaders, model, device, config, args, rank):
     nocompile = args.nocompile
     restart = args.restart
     # define train/val samples, loss function and optimizer
@@ -149,7 +149,7 @@ def train(train_loaders, test_loaders, model, device, config, args, rank):
         finish_fn = torch.nn.Sigmoid()
     else:
         loss_fcn = utils.buildFromConfig(config['Loss'], {'reduction':'none'})
-        finish_fn = utils.buildFromConfig(config['Loss']['finish'])
+        finish_fn = utils.buildFromConfig(config['Loss'].get('finish', {'module': 'torch.nn', 'class': 'Sigmoid', 'args': {}}))
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config['Training']['learning_rate'])
     if 'gamma' in config['Training']:
@@ -382,11 +382,16 @@ def train(train_loaders, test_loaders, model, device, config, args, rank):
         weights = []
         model.eval()
 
+        # Use the validation parity for monitoring / early stopping when available.
+        # The held-out test parity is then never touched during training.
+        eval_loaders = val_loaders if len(val_loaders) > 0 else test_loaders
+        has_validation = len(val_loaders) > 0
+
         if (args.profile):
             torch.cuda.nvtx.range_push("Model Evaluation")
 
         with torch.no_grad():
-            for loader in test_loaders:
+            for loader in eval_loaders:
                 for batch, label, track, global_feats in loader:
                     #Don't use compiled model for testing since we can't control the batch size.
                     #We could before, but it assumes each dataset has the same number of batches...
@@ -556,8 +561,14 @@ def train(train_loaders, test_loaders, model, device, config, args, rank):
 
 
         end = time.time()
-        log_str = "Epoch {:05d} | LR {:.4e} | Loss {:.4f} | Accuracy {:.4f} | Test_Loss {:.4f} | Test_AUC {:.4f} | Time {:.4f} s".format(
-                epoch, optimizer.param_groups[0]['lr'], total_loss/ibatch, acc, test_loss, test_auc, end - start
+        acc_name = "Val_Accuracy" if has_validation else "Accuracy"
+        loss_name = "Val_Loss" if has_validation else "Test_Loss"
+        auc_name = "Val_AUC" if has_validation else "Test_AUC"
+        log_str = (
+            f"Epoch {epoch:05d} | LR {optimizer.param_groups[0]['lr']:.4e} | "
+            f"Loss {total_loss/ibatch:.4f} | {acc_name} {acc:.4f} | "
+            f"{loss_name} {test_loss:.4f} | {auc_name} {test_auc:.4f} | "
+            f"Time {end - start:.4f} s"
         )
         log.write(log_str + '\n')
         print(log_str, flush=True)
@@ -720,7 +731,10 @@ def main(rank=0, args=None, world_size=1, port=24500, seed=12345):
                 #     sampler.pop()
             if (args.multinode):
                 sampler = DistributedSampler(ldr, num_replicas=world_size, rank=pargs.global_rank, shuffle=False, drop_last=True)
-            train_loaders.append(torch.utils.data.DataLoader(ldr, batch_size = None, num_workers = 0, sampler = sampler))
+            if args.epoch_shuffle and sampler is None:
+                train_loaders.append(torch.utils.data.DataLoader(ldr, batch_size=None, num_workers=0, shuffle=True))
+            else:
+                train_loaders.append(torch.utils.data.DataLoader(ldr, batch_size = None, num_workers = 0, sampler = sampler))
             sampler = None
             ldr = ldr_type(start_dataset=dset, batch_size=batch_size, mask_fn=mask_fn, suffix = utils.fold_selection_name(fold_conf, 'test'), chunks = shuffle_chunks, padding_mode = padding_mode, hidden_size= config['Model']['args']['hid_size'])
             if (args.multigpu):
@@ -734,10 +748,17 @@ def main(rank=0, args=None, world_size=1, port=24500, seed=12345):
 
             test_loaders.append(torch.utils.data.DataLoader(ldr, batch_size = None, num_workers = 0, sampler=sampler))
 
-            # if "validation" in fold_conf:
-            #     val_loaders.append(torch.utils.data.DataLoader((ldr_type(start_dataset=dset, batch_size=batch_size, mask_fn=utils.fold_selection(fold_conf, "validation"), suffix = utils.fold_selection_name(fold_conf, 'validation'), chunks = shuffle_chunks, hidden_size=config['Model']['args']['hid_size'],  padding_mode = padding_mode, rank=rank, world_size=1)), batch_size = None, num_workers = 0, sampler = sampler))
-            # else:
-            #     print("No validation set for dataset ", dset_conf)
+            if "validation" in fold_conf:
+                sampler = None
+                ldr = ldr_type(start_dataset=dset, batch_size=batch_size,
+                               mask_fn=utils.fold_selection(fold_conf, "validation"),
+                               suffix=utils.fold_selection_name(fold_conf, "validation"),
+                               chunks=shuffle_chunks, padding_mode=padding_mode,
+                               hidden_size=config['Model']['args']['hid_size'])
+                val_loaders.append(torch.utils.data.DataLoader(
+                    ldr, batch_size=None, num_workers=0, sampler=sampler))
+            else:
+                print("No validation set for dataset ", dset_conf)
         else:
             train_loaders.append(datasets.GetBatchedLoader(dset, batch_size, utils.fold_selection(fold_conf, "train")))  
             gsamp, _, _, global_samp = dset[0]
@@ -783,7 +804,7 @@ def main(rank=0, args=None, world_size=1, port=24500, seed=12345):
     # model training
     print("Training...")
     gpu_mem()
-    train(train_loaders, test_loaders, model, device, config, args, rank)
+    train(train_loaders, test_loaders, val_loaders, model, device, config, args, rank)
 
     # test the model
     # print("Testing...")
@@ -805,6 +826,8 @@ if __name__ == "__main__":
     add_arg("--config", type=str, help="Config file.", required=True)
     add_arg("--restart", action="store_true", help="Restart training from scratch.")
     add_arg("--preshuffle", action="store_true", help="Shuffle data before training.")
+    add_arg("--epoch-shuffle", action="store_true",
+            help="With --preshuffle, reshuffle the prebatched batches every epoch.")
     add_arg("--lazy", action="store_true", help="Lazy loading of data.")
     add_arg("--nocompile", action="store_true", help="Disable JIT compilation.")
     add_arg("--evaluate", type = int, help="Skip training and go to evaluation.")

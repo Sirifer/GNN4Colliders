@@ -1,0 +1,414 @@
+CMS H→Zγ ttH GNN 工作总结与后续 Workflow
+=========================================
+
+一、研究目标
+------------
+当前工作的目标是使用 GNN 对 H→Zγ 事例中的 ttH 信号进行分类，并与原有 cut-based ttH 分类进行比较。
+
+主要关注两个问题：
+1. GNN 是否能够提高 ttH 信号的分类能力和统计显著性；
+2. GNN 的输出是否与 m_llγ 存在相关性，从而造成 mass sculpting，影响后续 Higgs 质量谱拟合。
+
+
+二、当前分类任务
+--------------
+二分类定义：
+
+Signal:
+    ttH
+
+Other:
+    VH
+    ggF
+    VBF
+    TT
+    DYGto2LG_10to100
+
+训练使用 Run-3 样本：
+    2022preEE
+    2022postEE
+    2023preBPix
+    2023postBPix
+    2024
+    2025
+
+目前没有使用 DYJetsToLL_Stitch 作为主要背景训练样本，
+原因是该样本存在较多负权重和较大的权重波动，会造成统计不稳定。
+
+
+三、2-fold OOF 训练方式
+---------------------
+使用 photon_eta_fold 进行 2-fold 划分：
+
+fold0 model:
+    train = fold 1
+    test  = fold 0
+
+fold1 model:
+    train = fold 0
+    test  = fold 1
+
+最终分析时使用 OOF（out-of-fold）score：
+每个 event 只使用“没有见过它”的模型进行推理，
+避免训练样本和评估样本重叠造成的偏差。
+
+
+四、GNN 基本结构
+--------------
+模型：
+    models.GCN.Edge_Network
+
+主要参数：
+    hidden size     = 64
+    input size      = 6
+    output size     = 1
+    GNN layers      = 4
+    processing step = 4
+    dropout         = 0
+
+训练参数：
+    epochs        = 100
+    batch size    = 256
+    learning rate = 1e-4
+    gamma         = 0.99
+
+训练权重：
+    weight_lumi_avg
+
+tracking 信息：
+    weight_lumi
+    source_tree_tag
+
+
+五、GNN 输入变量
+--------------
+每个 node 的主要输入包括：
+
+1. pT 相关变量
+2. eta
+3. phi
+4. jet/bjet 的 b-tag score，photon 的 ID MVA
+5. lepton PDG ID
+6. NODE_TYPE
+
+node 类型包括：
+    jet
+    bjet
+    lepton
+    photon
+    MET
+
+
+六、已经测试的输入方案
+--------------------
+
+1. Baseline
+-----------
+最初输入中使用原始 pT。
+
+这一版本的 GNN 在 high-score category 中出现明显的 m_llγ sculpting：
+经过 GNN cut 后，continuum background 在 Higgs signal region 附近出现增强。
+
+
+2. pt_only / partial decorrelation
+----------------------------------
+当前较主要的版本：
+
+lepton:
+    pT / m_llγ
+
+photon:
+    pT / m_llγ
+
+jet:
+    raw pT
+
+bjet:
+    raw pT
+
+MET:
+    raw pT
+
+这个思路参考了 H→γγ 分析中对 Higgs decay object 使用
+pT / mγγ 来减少 classifier 与 Higgs mass 的相关性。
+
+结果：
+    相比 baseline，mass sculpting 有所变化/减弱，
+    但仍然存在明显的 residual mass dependence。
+
+因此，仅仅对 lepton 和 photon 做 pT/m_llγ 不能完全消除 mass sculpting。
+
+
+3. full_decorr
+--------------
+进一步测试了：
+
+jet:
+    pT / m_llγ
+
+bjet:
+    pT / m_llγ
+
+lepton:
+    pT / m_llγ
+
+photon:
+    pT / m_llγ
+
+MET:
+    pT / m_llγ
+
+即所有 pT 类输入都除以 m_llγ。
+
+结果：
+    Higgs signal region 附近的局部 sculpting 进一步发生变化，
+    说明 jet / bjet / MET 等 event-level kinematics 中也携带
+    与 m_llγ 有关的信息。
+
+但该方法并不能保证真正的 mass decorrelation，
+因为 GNN 仍然可以通过 eta、phi、物体间关联以及整体运动学关系
+间接获得 mass information。
+
+
+七、当前 mass sculpting 结论
+--------------------------
+目前可以得到的主要结论是：
+
+1. Baseline GNN 存在明显 mass sculpting；
+2. 对 Higgs decay object 使用 pT/m_llγ 有帮助，但不足以完全解决；
+3. 所有 pT/m_llγ 会进一步改变 mass correlation，但仍不能保证独立；
+4. mass sculpting 不只是由某一个显式 mass-sensitive variable 引起，
+   GNN 可以通过多变量运动学关系间接学习 m_llγ；
+5. 因此后续如有需要，可以考虑显式的 score-mass decorrelation，
+   例如 DDT / quantile decorrelation、distance-correlation loss
+   或 adversarial decorrelation。
+
+目前建议先固定现有 GNN，不再继续大量修改网络结构和输入。
+
+
+八、当前 GNN category 定义
+------------------------
+GNN score 分为：
+
+low:
+    score <= c1
+
+medium:
+    c1 < score <= c2
+
+high:
+    score > c2
+
+此前扫描得到的 cut 大约为：
+    c1 ~ 0.93
+    c2 ~ 0.995
+
+cut 通过 OOF score 扫描得到，
+同时使用 Data sideband 作为稳定性检查。
+
+
+九、Data sideband 的用途
+----------------------
+Data 不参与监督训练。
+
+Data sideband 当前主要用于：
+
+1. 检查 GNN cut 后是否仍有足够数据统计；
+2. 避免 high category 被切到完全没有数据；
+3. 比较不同模型在相同 sideband 条件下的 mass shape；
+4. 诊断 GNN 是否将 sideband/background sculpt 到 Higgs SR 附近。
+
+
+十、当前显著性计算
+----------------
+目前使用 MC 计算：
+
+S = sum(signal weights)
+
+B = sum(background weights)
+
+统计误差：
+    sigma_S = sqrt(sum(w^2))
+    sigma_B = sqrt(sum(w^2))
+
+显著性使用 Asimov significance：
+
+    Z = sqrt( 2 * [ (S+B) ln(1+S/B) - S ] )
+
+不同 category 的 Z 通过平方和合并。
+
+
+十一、当前显著性计算的主要问题
+----------------------------
+目前 high-score category 中背景 MC 统计非常差。
+
+例如某些结果中：
+
+    N_bkg = 0.0366 ± 0.0336
+
+即背景统计误差已经接近背景本身。
+
+这种情况下：
+    直接依赖 MC counting 得到的 B 和 Z 不够稳定，
+    对最终 GNN 性能的评价也不够可靠。
+
+因此，下一阶段的重点应该从“继续训练 GNN”
+转移到“更可靠的 background estimation 和 significance calculation”。
+
+
+十二、下一阶段 Workflow
+----------------------
+
+Step 1：固定当前 GNN
+-------------------
+先不继续修改 GNN 结构。
+
+保留：
+    2-fold OOF
+    当前输入方案
+    当前 high / medium category
+
+重点转向 mass fit 和背景估计。
+
+
+Step 2：对 GNN category 中的 Data sideband 做 mass fit
+----------------------------------------------------
+对每个 GNN category 分别处理，例如：
+
+    high
+    medium
+
+选择经过 GNN cut 之后的 Data：
+
+    sideband:
+        100 < m_llγ < 120 GeV
+        130 < m_llγ < 180 GeV
+
+    signal region:
+        120 < m_llγ < 130 GeV
+
+SR 在拟合时先 blind。
+
+
+Step 3：使用简单背景函数拟合 sideband
+-----------------------------------
+第一阶段先使用简单函数测试，例如：
+
+    exponential
+    low-order polynomial
+    Bernstein polynomial
+
+示意：
+
+    f(m) = N * exp(a*m)
+
+或者其他低阶平滑函数。
+
+
+Step 4：从 sideband fit 外推到 SR
+-------------------------------
+通过拟合函数估计：
+
+    B_SR = integral_120^130 f(m) dm
+
+也可以写成：
+
+    B_SR =
+        N_SB *
+        [ integral_SR f(m) dm ]
+        /
+        [ integral_SB f(m) dm ]
+
+这样背景估计主要由真实 Data sideband 决定，
+而不是由 high-score category 中少量 MC event 决定。
+
+
+Step 5：得到 B_SR 的拟合误差
+---------------------------
+背景误差应该包含：
+
+1. Data sideband 的统计误差；
+2. fit parameter uncertainty；
+3. 后续可增加 fit function choice 的系统误差。
+
+
+Step 6：重新计算显著性
+---------------------
+第一阶段可以使用：
+
+    S = MC signal yield in SR
+    B = fitted Data-driven background in SR
+    sigma_B = fit uncertainty
+
+然后使用包含 background uncertainty 的 Asimov significance。
+
+这会比当前仅依赖 MC counting 的 Z 更可靠。
+
+
+Step 7：最终可升级到 full mass likelihood
+--------------------------------------
+如果 sideband fit 工作稳定，
+最终可以不再把结果压缩为单个 S、B，
+
+而是直接对 m_llγ 做 signal + background likelihood fit：
+
+    L(mu, theta)
+        = product_i Poisson(
+            n_i | mu*s_i + b_i(theta)
+          )
+
+然后使用 profile likelihood：
+
+    q0 = -2 ln lambda(0)
+
+计算最终 significance。
+
+这会更接近正式 H→Zγ 分析中的处理方式。
+
+
+十三、接下来最直接的任务
+----------------------
+优先级建议：
+
+1. 找一个简单的 sideband mass fit 例子；
+2. 先对 GNN high category 的 Data sideband 做 exponential fit；
+3. blind 120–130 GeV；
+4. 外推得到 B_SR；
+5. 输出 B_SR ± fit uncertainty；
+6. 用新的 B 和 sigma_B 重新计算 Z；
+7. medium category 做同样处理；
+8. 最后再考虑更复杂的 background model 或 full likelihood。
+
+
+十四、当前阶段总结
+----------------
+目前 GNN 训练部分已经基本完成：
+
+    样本定义          已完成
+    2-fold OOF        已完成
+    GNN 分类          已完成
+    score cut 扫描    已完成
+    baseline 比较     已完成
+    pT/m decorrelation study  已完成
+    mass sculpting 检查       已开展
+
+当前主要限制已经不是 GNN 本身，
+而是 high-score category 中 background MC statistics 太低。
+
+因此下一阶段核心目标是：
+
+    从 MC-counting-based significance
+
+过渡到：
+
+    Data-sideband-fit-based background estimation
+    + more reliable significance calculation
+
+最终目标是：
+
+    GNN category
+        +
+    m_llγ signal/background fit
+        +
+    profile-likelihood significance
+

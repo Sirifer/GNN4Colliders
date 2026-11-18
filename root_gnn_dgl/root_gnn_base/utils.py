@@ -13,7 +13,7 @@ def buildFromConfig(conf, run_time_args = {}):
         module = importlib.import_module(conf['module'])
         cls = getattr(module, conf['class'])
         args = conf['args'].copy()
-        extra_args = {k: v for k, v in conf.items() if k not in ['module', 'class', 'args']}
+        extra_args = {k: v for k, v in conf.items() if k not in ['module', 'class', 'args', 'finish']}
         args.update(extra_args)
         if 'weight' in args and isinstance(args['weight'], list):
             args['weight'] = torch.tensor(args['weight'], dtype=torch.float, device=device)
@@ -311,7 +311,7 @@ def plot_log(log, output_file):
     ax[1][0].plot(log['Epoch'], log['Accuracy'], label='Test Accuracy')
     ax[1][0].set_xlabel('Epoch')
     ax[1][0].set_ylabel('Accuracy')
-    ax[1][0].set_ylim((0.44, 0.56))
+    ax[1][0].set_ylim((0, 1.02))
     ax[1][0].legend()
 
     #AUC

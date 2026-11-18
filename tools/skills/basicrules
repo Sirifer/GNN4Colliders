@@ -1,0 +1,6 @@
+1.每天我给出写日志命令后，把当作做的事情填到/scratchfs2/cms/huangsuyun/GNN4Colliders/tools/claude，写上日期，跑了什么代码，代码在哪里，结果在哪里，完成了什么，遇到了什么问题，怎么解决的。
+2.打开/scratchfs2/cms/huangsuyun/GNN4Colliders/具体流程你可以看/scratchfs2/cms/huangsuyun/GNN4Colliders/root_gnn_dgl/.codex和/scratchfs2/cms/huangsuyun/GNN4Colliders/root_gnn_dgl/jobs
+3.每次要写代码，跑作业前先问题，代码不要复杂，可以增加新的功能，比如输出更多的信息，但是得先问我。问你问题时你得先理解我的问题，定位问题，然后再问我问题，问问题时要有针对性，不能问一些无关紧要的问题，然后告诉我解决思路和原理
+4.你要学会使用git，git的使用方法可以参考/scratchfs2/cms/huangsuyun/GNN4Colliders/tools/skills/basicrules/git.md
+5.我问你报错的问题时，你要定位为什么错，定位哪些代码，错在哪里
+先梳理思路，讲一下你准备怎么做。然后第一步你打算怎 么做。写好的代码之后功能是什么，然后让我来跑 。

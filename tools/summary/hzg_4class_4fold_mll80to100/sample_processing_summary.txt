@@ -1,0 +1,196 @@
+HZγ ttH 4-class v3 (Mll80to100) — 样本处理总结 (Step1 merge + Step2 pt_only)
+============================================================================
+更新日期: 2026-11-03
+
+记录 v3 (Mll80to100) 4-class 分析里所有样本（Signal / Bkg / Data / CR Data）的
+Step1（merge）+ Step2（pt_only）处理：用了什么样本、做了什么处理、加了什么变量/tag。
+只覆盖数据准备，不含训练/推理/Z。
+
+
+一、样本清单
+============
+原始样本根目录：/publicfs/cms/user/laipeizhu/Eos/HZgamma/root_p2root_v3_Mll80to100
+era 范围：Run2（2016preVFP、2016postVFP、2017、2018）+ Run3（2022preEE、2022postEE、
+          2023preBPix、2023postBPix、2024、2025、2026），共 11 个 era。
+不是每个样本都有全部 era（下面标了实际文件数），脚本按实际存在的文件处理，不硬编码 era。
+
+A. 信号样本（4 个，全 11 era）
+   ┌──────────────┬────────────┬──────────┬──────────┬───────────────┐
+   │ 样本         │ 4-class 类 │ label    │ 文件数   │ 事件数(merge) │
+   │              │            │ (config) │          │               │
+   ├──────────────┼────────────┼──────────┼──────────┼───────────────┤
+   │ Signal/ttH   │ ttH        │ 1        │ 11       │ 1,244,606     │
+   │ Signal/VH    │ VH         │ 2        │ 11       │   823,794     │
+   │ Signal/ggF   │ ggF+VBF    │ 3        │ 11       │    16,914     │
+   │ Signal/VBF   │ ggF+VBF    │ 3        │ 11       │    42,026     │
+   └──────────────┴────────────┴──────────┴──────────┴───────────────┘
+   注：ggF 和 VBF 是两个独立样本，但在 4-class 里合成一类（label=3）。
+
+B. 背景样本（7 个）
+   ┌────────────────────────────┬──────────┬──────────┬───────────────┐
+   │ 样本                       │ label    │ 文件数   │ 事件数(merge) │
+   ├────────────────────────────┼──────────┼──────────┼───────────────┤
+   │ Bkg_MC/TT                  │ 0 (bkg)  │ 11       │    55,616     │
+   │ Bkg_MC/DYGto2LG_10to100    │ 0        │  7       │    76,337     │
+   │ Bkg_MC/DYGto2LG_100to200   │ 0        │  4       │     1,909     │
+   │ Bkg_MC/DYGto2LG_200to400   │ 0        │  4       │       293     │
+   │ Bkg_MC/DYGto2LG_400to600   │ 0        │  4       │       166     │
+   │ Bkg_MC/DYGto2LG_600        │ 0        │  4       │       148     │
+   │ Bkg_MC/DYJetsToLL_Stitch   │ 0        │ 11       │    30,087     │
+   └────────────────────────────┴──────────┴──────────┴───────────────┘
+   DYG 高质量点（100to200 及以上）只有 4 个 Run3 era；10to100 有 7 个。
+   背景类 = TT + 5 个 DYG 质量点 + DYJetsToLL_Stitch，共 7 个样本合成 label=0。
+   v2 只有 TT + DYGto2LG_10to100 两个，v3 扩到 7 个。
+
+C. 名义数据（nominal Data）
+   ┌──────────┬───────────┬──────────┬───────────────┐
+   │ 样本     │ label     │ 文件数   │ 事件数(merge) │
+   ├──────────┼───────────┼──────────┼───────────────┤
+   │ Data/Data│ -1（不训练）│ 11       │    17,276     │
+   └──────────┴───────────┴──────────┴───────────────┘
+   v3 里 Data 带 weight_lumi（=1.0），走和 MC 一样的 pt_only 流程（avg=1.0）。
+   名义数据合的是 5 个 category 的 SR__<cat> + Sideband__<cat>（10 棵树）。
+
+D. CR 数据（方法二，独立处理，不动 nominal）
+   ┌──────────┬───────────┬──────────┬───────────────┐
+   │ 样本     │ label     │ 文件数   │ 事件数(merge) │
+   ├──────────┼───────────┼──────────┼───────────────┤
+   │ Data/Data│ -1        │ 11       │     6,621     │
+   └──────────┴───────────┴──────────┴───────────────┘
+   只从 Data/Data 提 CR_lowIDMVA 的 10 棵树（5 cat × {SR, SB}），合成 merged_CR_lowIDMVA。
+   不碰 inclusive（避免重复计数），不碰 lowPTOverMllg / FSRgamma（本期只用 lowIDMVA）。
+   纯数据驱动，不处理 MC 的 CR。
+
+名义全部样本合计：约 2,309,172 events（Signal+Bkg+Data）。
+CR 数据：6,621 events。
+
+
+二、Step1 — merge（合并 5 个 category 的 SR+Sideband 树）
+=========================================================
+脚本：
+  名义：tools/code/merge_trees_v3.py        → 输出 root_p2root_v3_merged/
+  CR  ：tools/code/merge_cr_lowIDMVA_v3.py  → 输出 root_p2root_v3_cr_merged/
+
+A. 处理逻辑（名义）
+   - 对每个样本目录的每个 era .root 文件，用 set 精确匹配挑出 10 棵树：
+       SR__<cat>      （cat = ttHhad/ttHlep/untag/VH3l/VHpTmiss）× 5
+       Sideband__<cat>                                           × 5
+     合成一棵 "merged_SR_Sideband"。
+   - 不误捡 SR__ggF / SR__VBF（分析 category 树，不是训练用的）和 *_JES_up 等
+     系统性变体树（set 精确匹配，不会误捡）。
+   - 保留目录结构（Signal/ttH/<era>.root 等）。
+
+B. 处理逻辑（CR）
+   - 只扫 Data/Data，提 10 棵 CR 树：
+       CR_lowIDMVA__<cat>     （CR SR 区，m_llg ~108-136）× 5
+       CR_lowIDMVA_SB__<cat>  （CR SB 区，m_llg ~96-184） × 5
+     合成一棵 "merged_CR_lowIDMVA"。
+   - CR 树和 SR/Sideband 树分支完全一致（406 个分支），所以 Step2 能直接复用名义脚本。
+   - inclusive（CR_lowIDMVA__inclusive）远大于 sum(5cat)（2018：10009 vs 161），
+     category 树是 exclusive 切片，所以不合并 inclusive（否则重复计数），
+     留在原始文件做交叉检查。
+
+C. merge 步加的变量/tag（两个脚本语义相同，只是 tag 布局不同）
+   ┌──────────────────┬────────┬──────────────────────────────────────────────┐
+   │ 变量             │ dtype  │ 含义                                         │
+   ├──────────────────┼────────┼──────────────────────────────────────────────┤
+   │ source_tree_tag  │ int32  │ 事件来自哪棵输入树（按 region 标记）         │
+   │                  │        │ 名义：0/2/4/6/8 = SR_{ttHhad,ttHlep,untag,  │
+   │                  │        │       VH3l,VHpTmiss}                         │
+   │                  │        │       1/3/5/7/9 = 对应 Sideband（SR/SB 交替）│
+   │                  │        │ CR  ：0-4 = CR_lowIDMVA__{5 cat}（CR SR）   │
+   │                  │        │       5-9 = CR_lowIDMVA_SB__{5 cat}（CR SB）│
+   │                  │        │       （按 region 分组，不是交替）           │
+   ├──────────────────┼────────┼──────────────────────────────────────────────┤
+   │ weight_lumi_abs  │ float32│ abs(weight_lumi)，训练权重；Data=1.0         │
+   ├──────────────────┼────────┼──────────────────────────────────────────────┤
+   │ photon_eta_fold  │ int32  │ int32(floor(photon_eta*10000))，fold 变量    │
+   │                  │        │ 下游用 photon_eta_fold % n_folds 划分 fold   │
+   │                  │        │ （utils.py:126）；名义和 CR 同编码，推理时   │
+   │                  │        │ CR 能按同样的 fold 逻辑切。                  │
+   │                  │        │ v2 要单独跑 add_photon_eta_fold.py，v3 合进  │
+   │                  │        │ merge 省 I/O。                              │
+   ├──────────────────┼────────┼──────────────────────────────────────────────┤
+   │ class_tag        │ int32  │ 样本所属 4-class（同文件同值，按样本目录决定）│
+   │                  │        │ 0=bkg  1=ttH  2=VH  3=ggF/VBF  -1=Data       │
+   │                  │        │ 和 config 里 per-dataset label 一致，下游可  │
+   │                  │        │ 按 class 分组无需从路径重判。和 source_tree_ │
+   │                  │        │ tag 不同：前者按 class，后者按 region(0-9)。 │
+   └──────────────────┴────────┴──────────────────────────────────────────────┘
+   CR 的 class_tag 全是 -1（只处理 Data，Data 不训练）。
+
+   ★ 名义和 CR 的 source_tree_tag 布局不同：
+     名义是 SR/SB 交替（偶=SR，奇=SB），tag//2 = category index；
+     CR 是按 region 分组（0-4 SR，5-9 SB）。下游脚本两边都正确处理了，不要混用。
+
+
+三、Step2 — pt_only（加 _div_mllg 派生分支 + weight_lumi_avg）
+=============================================================
+脚本：tools/code/prepare_pt_only_inputs_v3.py（名义和 CR 共用，CR 用 --tree 参数）
+  名义：--tree merged_SR_Sideband  → 输出 root_p2root_v3_pt_only/
+  CR  ：--tree merged_CR_lowIDMVA  → 输出 root_p2root_v3_cr_pt_only/
+
+A. Pass 1：算 weight_lumi_avg（按样本目录分组）
+   - 扫全部 era 文件，按样本目录（Signal/ttH、Bkg_MC/TT、Data/Data 等）分组，
+     算 mean(weight_lumi)，同 process 全 era 共用一个常数。
+   - v3 Data 的 weight_lumi=1.0，所以 Data 的 avg=1.0（正常算，不是特殊路径）。
+   - 这是 significance/Z 脚本消费的权重变量。v2 要单独跑 add_avg_weight_and_check.py，
+     v3 合进 pt_only。
+   - 实测 CR Data：N=6621，sum(w)=6621，avg=1.00000000。
+
+B. Pass 2：加 _div_mllg 派生分支
+   - 对 16 个 pT 分支，加 <pt>_div_mllg = pT / m_llg：
+       lep0_pt .. lep5_pt_div_mllg   （6 个 lepton）
+       photon_pt_div_mllg            （1 个 photon）
+       jet0_pt .. jet5_pt_div_mllg   （6 个 jet）   ← 也算但 config 不一定用
+       bjet0_pt .. bjet1_pt_div_mllg （2 个 bjet）
+       MET_pt_div_mllg
+   - 定义：pt>0 时 = pt/m_llg，pt<=0 时保留原值（placeholder）。
+   - config 里 lep/photon 用 _div_mllg，jet/bjet/MET 用 raw pt（partial decorr）。
+     脚本保留全部 _div_mllg 供后续 full_decorr 实验用。
+   - 透传其余所有分支（source_tree_tag、photon_eta_fold、weight_lumi、m_llg、is_SR、
+     class_tag、原始 pT/eta/phi/btag/pdgId 等）。
+
+C. pt_only 步加的变量
+   ┌──────────────────┬────────┬──────────────────────────────────────────────┐
+   │ 变量             │ dtype  │ 含义                                         │
+   ├──────────────────┼────────┼──────────────────────────────────────────────┤
+   │ <pt>_div_mllg    │ float32│ pT/m_llg，16 个（leps/photon/jets/bjets/MET）│
+   │                  │        │ placeholder：pt<=0 时保留原值                │
+   ├──────────────────┼────────┼──────────────────────────────────────────────┤
+   │ weight_lumi_avg  │ float32│ 按 process 分组的 mean(weight_lumi) 常数     │
+   │                  │        │ 同 process 全 era 同值；Data=1.0。Z 脚本用。 │
+   └──────────────────┴────────┴──────────────────────────────────────────────┘
+
+
+四、变量来源速查（哪些是原始文件有，哪些是分步补的）
+======================================================
+原始 v3 文件没有：photon_eta_fold、weight_lumi_abs、weight_lumi_avg、class_tag、
+                  source_tree_tag —— 全是 merge / pt_only 分步补的。
+原始 v3 文件有  ：m_llg、photon_eta、weight_lumi（Data=1.0）、lep/jet/photon 的
+                  pt/eta/phi/pdgId、jet_hzg_btag_score、photon_mvaID、is_SR、MET_pt 等。
+
+分步归属：
+  merge 步补  ：source_tree_tag、weight_lumi_abs、photon_eta_fold、class_tag
+  pt_only 步补：<pt>_div_mllg（×16）、weight_lumi_avg
+
+
+五、输出目录
+============
+名义（已完成）：
+  root_p2root_v3_merged/<Signal|Bkg_MC|Data>/.../<era>.root  （tree：merged_SR_Sideband）
+  root_p2root_v3_pt_only/<Signal|Bkg_MC|Data>/.../<era>.root （同上 + _div_mllg + weight_lumi_avg）
+
+CR 数据（Step1+2 已完成）：
+  root_p2root_v3_cr_merged/Data/Data/<era>.root   （tree：merged_CR_lowIDMVA）
+  root_p2root_v3_cr_pt_only/Data/Data/<era>.root  （同上 + _div_mllg + weight_lumi_avg）
+
+CR 不复用名义的 merged/pt_only 目录，完全独立；名义 Data / MC 不动。
+
+
+六、为什么 CR 要单独 config（推理时，不是数据准备）
+==================================================
+（这条给 Step3 推理用，数据准备不涉及，但容易踩坑所以记这）
+inference.py 写分两步：line 243 读（受 --tree CLI 影响）、line 330 写（重新从 config
+取 tree_name，不受 --tree 影响）。所以 CR 必须有单独 config 把 tree_name 改成
+merged_CR_lowIDMVA，不能只在名义 config 上加 --tree。详见 cr_lowIDMVA_method2_workflow.txt。
